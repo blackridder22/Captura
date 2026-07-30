@@ -6,15 +6,10 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  hideMainWindow,
-  onCaptured,
-  onFocusComposer,
-  quitApp,
-  updateItem,
-} from "./lib/api";
+import { hideMainWindow, quitApp, updateItem } from "./lib/api";
 import { matchesShortcut, shortcutLabel } from "./lib/shortcuts";
 import type { CaptureItem } from "./types";
+import { useAppEvents } from "./hooks/use-app-events";
 import { useComposer } from "./hooks/use-composer";
 import { useItemActions } from "./hooks/use-item-actions";
 import { useNotify } from "./hooks/use-notify";
@@ -106,46 +101,6 @@ export default function App() {
     seedIfEmpty(nextItems[0]?.id ?? null);
   }, [refreshData, seedIfEmpty]);
 
-  useEffect(() => {
-    void refresh();
-    void refreshPermissions();
-
-    let stopCapture: () => void = () => {};
-    let stopFocus: () => void = () => {};
-    void onCaptured((item) => {
-      prependDeduped(item);
-      setFilter("inbox");
-      setSingle(item.id);
-      announce("Capture saved");
-    }).then((off) => {
-      stopCapture = off;
-    });
-    void onFocusComposer(() => {
-      focusComposer();
-    }).then((off) => {
-      stopFocus = off;
-    });
-
-    const handleFocus = () => {
-      void refresh();
-      void refreshPermissions();
-    };
-    window.addEventListener("focus", handleFocus);
-    return () => {
-      stopCapture();
-      stopFocus();
-      window.removeEventListener("focus", handleFocus);
-    };
-  }, [
-    announce,
-    focusComposer,
-    prependDeduped,
-    refresh,
-    refreshPermissions,
-    setFilter,
-    setSingle,
-  ]);
-
   const {
     handleCreate,
     handleToggle,
@@ -195,6 +150,13 @@ export default function App() {
     refreshPermissions,
     announce,
     notify,
+  });
+
+  useAppEvents({
+    refresh,
+    refreshPermissions,
+    onCapturedItem: handleCaptured,
+    focusComposer,
   });
 
   useEffect(() => {
