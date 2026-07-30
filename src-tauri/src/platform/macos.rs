@@ -1,17 +1,21 @@
-use std::{ffi::c_void, ptr, thread, time::Duration};
+use std::{ffi::c_void, ptr, ptr::NonNull, thread, time::Duration};
 
+use block2::RcBlock;
 use core_graphics::{
     event::{CGEvent, CGEventFlags, CGEventTapLocation, KeyCode},
     event_source::{CGEventSource, CGEventSourceStateID},
 };
 use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationOptions, NSColor, NSPasteboard, NSPasteboardType,
-    NSPasteboardTypeString, NSRunningApplication, NSScreenSaverWindowLevel, NSWindow,
-    NSWindowCollectionBehavior, NSWorkspace,
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSColor,
+    NSPasteboard, NSPasteboardType, NSPasteboardTypeString, NSRunningApplication,
+    NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
+    NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
 };
 use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
-use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
+use objc2_foundation::{
+    NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString,
+};
 use tauri::WebviewWindow;
 use thiserror::Error;
 use uuid::Uuid;
@@ -109,6 +113,27 @@ pub fn configure_overlay_window(window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Reads back the invariants `configure_overlay_window` establishes, so the
+/// smoke test can assert against the live NSWindow rather than our own config.
+pub fn overlay_window_verified(window: &WebviewWindow) -> tauri::Result<bool> {
+    let ns_window = unsafe { &*(window.ns_window()? as *mut NSWindow) };
+    let behavior = ns_window.collectionBehavior();
+    let required = NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::CanJoinAllApplications
+        | NSWindowCollectionBehavior::FullScreenAuxiliary
+        | NSWindowCollectionBehavior::Stationary;
+    let forbidden =
+        NSWindowCollectionBehavior::Managed | NSWindowCollectionBehavior::MoveToActiveSpace;
+    Ok(behavior.contains(required)
+        && !behavior.intersects(forbidden)
+        && ns_window.level() == NSScreenSaverWindowLevel)
+}
+
+pub fn activation_policy_is_accessory(main_thread: MainThreadMarker) -> bool {
+    NSApplication::sharedApplication(main_thread).activationPolicy()
+        == NSApplicationActivationPolicy::Accessory
+}
+
 pub fn present_overlay_window(window: &WebviewWindow, focus: bool) -> tauri::Result<()> {
     let native_window = window.clone();
     window.run_on_main_thread(move || {
@@ -193,13 +218,8 @@ pub fn request_accessibility() -> bool {
     accessibility && post_events
 }
 
-pub fn frontmost_application() -> Result<ActiveApplication, PlatformError> {
-    let workspace = NSWorkspace::sharedWorkspace();
-    let application = workspace
-        .frontmostApplication()
-        .ok_or(PlatformError::ActiveApplication)?;
-
-    Ok(ActiveApplication {
+fn active_application_from(application: &NSRunningApplication) -> ActiveApplication {
+    ActiveApplication {
         pid: application.processIdentifier(),
         name: application
             .localizedName()
@@ -208,7 +228,49 @@ pub fn frontmost_application() -> Result<ActiveApplication, PlatformError> {
         bundle_id: application
             .bundleIdentifier()
             .map(|identifier| identifier.to_string()),
-    })
+    }
+}
+
+pub fn frontmost_application() -> Result<ActiveApplication, PlatformError> {
+    let workspace = NSWorkspace::sharedWorkspace();
+    let application = workspace
+        .frontmostApplication()
+        .ok_or(PlatformError::ActiveApplication)?;
+
+    Ok(active_application_from(&application))
+}
+
+/// Registers an app-lifetime observer for application activation. Must run on
+/// the main thread; the block executes on the main queue.
+pub fn observe_frontmost_application(
+    _main_thread: MainThreadMarker,
+    callback: impl Fn(ActiveApplication) + 'static,
+) {
+    let block = RcBlock::new(move |notification: NonNull<NSNotification>| {
+        let Some(user_info) = (unsafe { notification.as_ref().userInfo() }) else {
+            return;
+        };
+        let Some(entry) = user_info.objectForKey(unsafe { NSWorkspaceApplicationKey }) else {
+            return;
+        };
+        let Ok(application) = entry.downcast::<NSRunningApplication>() else {
+            return;
+        };
+        callback(active_application_from(&application));
+    });
+
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    let token = unsafe {
+        center.addObserverForName_object_queue_usingBlock(
+            Some(NSWorkspaceDidActivateApplicationNotification),
+            None,
+            Some(&NSOperationQueue::mainQueue()),
+            &block,
+        )
+    };
+    // The observer lives for the whole app; parking the non-Send token in a
+    // static buys nothing, so leak it intentionally.
+    std::mem::forget(token);
 }
 
 pub fn activate_application(application: &ActiveApplication) -> bool {
@@ -396,6 +458,15 @@ fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_application_from_never_produces_an_empty_name() {
+        // In a bare test harness currentApplication() is a placeholder with
+        // no localized name, which exercises the "Previous app" fallback.
+        let current = NSRunningApplication::currentApplication();
+        let active = active_application_from(&current);
+        assert!(!active.name.is_empty());
+    }
 
     #[test]
     fn overlay_behavior_joins_normal_and_fullscreen_spaces() {

@@ -1,6 +1,7 @@
 export type ItemKind = "prompt" | "note" | "link";
 export type ItemStatus = "open" | "done";
 export type QueueFilter = "inbox" | "prompts" | "notes" | "done";
+export type SectionFilter = "all" | "unfiled" | string;
 
 export type ShortcutAction =
   | "capture"

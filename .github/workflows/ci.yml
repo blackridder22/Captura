@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      # pnpm build already runs `tsc --noEmit` before vite build
+      - run: pnpm build
+
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  bundle:
+    runs-on: macos-latest
+    needs: [web, native]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          key: bundle
+      - run: pnpm install --frozen-lockfile
+      # ci.conf.json overrides the local dev signing identity with ad-hoc "-"
+      - run: pnpm tauri build --bundles app --config src-tauri/ci.conf.json
+      - name: Verify ad-hoc signature
+        run: codesign -dv src-tauri/target/release/bundle/macos/Captura.app 2>&1 | grep -q "Signature=adhoc"
+      - name: Zip app bundle
+        run: ditto -c -k --keepParent src-tauri/target/release/bundle/macos/Captura.app Captura.app.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Captura.app
+          path: Captura.app.zip
+          retention-days: 7
+
+  # Calibration phase: continue-on-error until runner behavior is proven
+  # stable, then flip to hard-fail. Local `script/build_and_run.sh smoke`
+  # is the hard gate in the meantime.
+  smoke:
+    runs-on: macos-latest
+    needs: [web, native]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          key: bundle
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm tauri build --bundles app --config src-tauri/ci.conf.json
+      - name: Run packaged-app smoke test
+        env:
+          CAPTURA_SKIP_BUILD: "1"
+          CAPTURA_SMOKE_REPORT: ${{ runner.temp }}/captura-smoke.json
+        run: bash script/build_and_run.sh smoke
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-report
+          path: ${{ runner.temp }}/captura-smoke.json
+          retention-days: 7

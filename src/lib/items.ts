@@ -2,6 +2,7 @@ import type {
   CaptureItem,
   ItemKind,
   QueueFilter,
+  SectionFilter,
 } from "../types";
 
 export function inferKind(content: string): ItemKind {
@@ -55,6 +56,30 @@ export function filterItems(
         value?.toLocaleLowerCase().includes(normalizedQuery),
       );
   });
+}
+
+export function applySectionFilter(
+  items: CaptureItem[],
+  sectionFilter: SectionFilter,
+) {
+  if (sectionFilter === "all") return items;
+  if (sectionFilter === "unfiled") {
+    return items.filter((item) => !item.sectionId);
+  }
+  return items.filter((item) => item.sectionId === sectionFilter);
+}
+
+export function countItems(items: CaptureItem[]) {
+  return {
+    inbox: items.filter((item) => item.status === "open").length,
+    prompts: items.filter(
+      (item) => item.status === "open" && item.kind === "prompt",
+    ).length,
+    notes: items.filter(
+      (item) => item.status === "open" && item.kind === "note",
+    ).length,
+    done: items.filter((item) => item.status === "done").length,
+  };
 }
 
 export function formatCaptureTime(iso: string) {

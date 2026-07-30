@@ -249,6 +249,7 @@ dependencies = [
 name = "captura"
 version = "0.0.1"
 dependencies = [
+ "block2",
  "chrono",
  "core-graphics",
  "directories",

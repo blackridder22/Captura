@@ -1,5 +1,7 @@
 mod database;
 mod platform;
+#[cfg(target_os = "macos")]
+mod smoke;
 
 use std::{
     path::PathBuf,
@@ -479,10 +481,7 @@ fn request_accessibility() -> bool {
     macos::request_accessibility()
 }
 
-fn remember_frontmost_application(app: &AppHandle) {
-    let Ok(active) = macos::frontmost_application() else {
-        return;
-    };
+fn store_previous_application(app: &AppHandle, active: ActiveApplication) {
     if active.bundle_id.as_deref() == Some(APP_BUNDLE_ID) {
         return;
     }
@@ -491,6 +490,13 @@ fn remember_frontmost_application(app: &AppHandle) {
     if let Ok(mut previous) = state.previous_application.lock() {
         *previous = Some(active);
     };
+}
+
+fn remember_frontmost_application(app: &AppHandle) {
+    let Ok(active) = macos::frontmost_application() else {
+        return;
+    };
+    store_previous_application(app, active);
 }
 
 fn handle_global_capture(app: AppHandle) {
@@ -705,12 +711,30 @@ pub fn run() {
             // The paste target must be "the app the user was just working in",
             // not "the app that was frontmost when Captura opened" — with the
             // keep-open panel the user switches apps while Captura stays
-            // visible, so the target has to follow them continuously.
-            let tracker = app.handle().clone();
-            thread::spawn(move || loop {
-                remember_frontmost_application(&tracker);
-                thread::sleep(Duration::from_millis(350));
-            });
+            // visible, so the target has to follow them continuously. The
+            // activation notification only fires on the NEXT switch, so seed
+            // the current frontmost app first.
+            remember_frontmost_application(app.handle());
+            let handle = app.handle().clone();
+            match objc2::MainThreadMarker::new() {
+                Some(main_thread) => {
+                    macos::observe_frontmost_application(main_thread, move |active| {
+                        store_previous_application(&handle, active);
+                    });
+                }
+                None => {
+                    // .setup() runs on the main thread, so this arm is
+                    // effectively dead — but degrading to the old poller
+                    // beats silently losing paste targeting.
+                    thread::spawn(move || loop {
+                        remember_frontmost_application(&handle);
+                        thread::sleep(Duration::from_millis(350));
+                    });
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            smoke::start_if_requested(app.handle().clone());
 
             Ok(())
         })

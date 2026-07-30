@@ -25,11 +25,27 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 core-graphics = "0.25"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSColor", "NSWindow"] }
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSColor",
+    "NSPasteboard",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSWindow",
+    "NSWorkspace",
+] }
 objc2-core-graphics = { version = "0.3", features = ["CGEvent"] }
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSString"] }
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSData",
+    "NSDictionary",
+    "NSNotification",
+    "NSOperation",
+    "NSString",
+] }
 
 [dev-dependencies]
 tempfile = "3"
