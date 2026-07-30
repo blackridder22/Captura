@@ -25,7 +25,6 @@ import {
   toggleItem,
   updateItem,
 } from "./lib/api";
-import { moveSelection, resolveSelection } from "./lib/selection";
 import { matchesShortcut, shortcutLabel } from "./lib/shortcuts";
 import type { CaptureItem } from "./types";
 import { useComposer } from "./hooks/use-composer";
@@ -34,6 +33,7 @@ import { useOverlays } from "./hooks/use-overlays";
 import { usePermissions } from "./hooks/use-permissions";
 import { useQueueData } from "./hooks/use-queue-data";
 import { useQueueFilters } from "./hooks/use-queue-filters";
+import { useSelection } from "./hooks/use-selection";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -75,8 +75,17 @@ export default function App() {
     visibleItems,
     counts,
   } = useQueueFilters(items);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const {
+    selectedId,
+    selectedIds,
+    selectedItems,
+    seedIfEmpty,
+    setSingle,
+    clear: clearSelection,
+    selectWith,
+    moveBy,
+    isSelected,
+  } = useSelection(visibleItems);
   const {
     composer,
     setComposer,
@@ -101,18 +110,11 @@ export default function App() {
   const { permissions, refreshPermissions } = usePermissions(settingsOpen);
   const { announcement, toast, announce, notify } = useNotify();
   const searchRef = useRef<HTMLInputElement>(null);
-  const selectionAnchorRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     const nextItems = await refreshData();
-    setSelectedId((current) => current ?? nextItems[0]?.id ?? null);
-    setSelectedIds((current) =>
-      current.length ? current : nextItems[0] ? [nextItems[0].id] : [],
-    );
-    if (!selectionAnchorRef.current) {
-      selectionAnchorRef.current = nextItems[0]?.id ?? null;
-    }
-  }, [refreshData]);
+    seedIfEmpty(nextItems[0]?.id ?? null);
+  }, [refreshData, seedIfEmpty]);
 
   useEffect(() => {
     void refresh();
@@ -123,9 +125,7 @@ export default function App() {
     void onCaptured((item) => {
       prependDeduped(item);
       setFilter("inbox");
-      setSelectedId(item.id);
-      setSelectedIds([item.id]);
-      selectionAnchorRef.current = item.id;
+      setSingle(item.id);
       announce("Capture saved");
     }).then((off) => {
       stopCapture = off;
@@ -146,39 +146,15 @@ export default function App() {
       stopFocus();
       window.removeEventListener("focus", handleFocus);
     };
-  }, [focusComposer, prependDeduped, refresh, refreshPermissions, setFilter]);
-
-  useEffect(() => {
-    if (!visibleItems.length) {
-      setSelectedId(null);
-      setSelectedIds([]);
-      selectionAnchorRef.current = null;
-      return;
-    }
-    if (!visibleItems.some((item) => item.id === selectedId)) {
-      setSelectedId(visibleItems[0]!.id);
-      setSelectedIds([visibleItems[0]!.id]);
-      selectionAnchorRef.current = visibleItems[0]!.id;
-      return;
-    }
-    setSelectedIds((current) => {
-      const next = current.filter((id) =>
-        visibleItems.some((item) => item.id === id),
-      );
-      if (
-        selectionAnchorRef.current &&
-        !visibleItems.some((item) => item.id === selectionAnchorRef.current)
-      ) {
-        selectionAnchorRef.current = selectedId;
-      }
-      return next;
-    });
-  }, [selectedId, visibleItems]);
-
-  const selectedItems = useMemo(
-    () => visibleItems.filter((item) => selectedIds.includes(item.id)),
-    [selectedIds, visibleItems],
-  );
+  }, [
+    announce,
+    focusComposer,
+    prependDeduped,
+    refresh,
+    refreshPermissions,
+    setFilter,
+    setSingle,
+  ]);
 
   const handleCreate = useCallback(async () => {
     const content = composer.trim();
@@ -190,9 +166,7 @@ export default function App() {
         ? (await moveItemsToSection([item.id], sectionFilter))[0] ?? item
         : item;
     prependItem(created);
-    setSelectedId(created.id);
-    setSelectedIds([created.id]);
-    selectionAnchorRef.current = created.id;
+    setSingle(created.id);
     setFilter("inbox");
     setComposer("");
     setSaving(false);
@@ -220,12 +194,10 @@ export default function App() {
     const ids = [...selectedIds];
     await Promise.all(ids.map((id) => deleteItem(id)));
     removeItems(ids);
-    setSelectedIds([]);
-    setSelectedId(null);
-    selectionAnchorRef.current = null;
+    clearSelection();
     setContextMenu(null);
     announce(`${ids.length} capture${ids.length === 1 ? "" : "s"} deleted`);
-  }, [selectedIds]);
+  }, [announce, clearSelection, removeItems, selectedIds, setContextMenu]);
 
   const handlePaste = useCallback(
     async (id: string) => {
@@ -240,24 +212,6 @@ export default function App() {
       }
     },
     [notify, replaceItem],
-  );
-
-  const selectItem = useCallback(
-    (id: string, options: { toggle: boolean; range: boolean }) => {
-      const next = resolveSelection({
-        orderedIds: visibleItems.map((item) => item.id),
-        selectedIds,
-        focusedId: selectedId,
-        anchorId: selectionAnchorRef.current,
-        targetId: id,
-        toggle: options.toggle,
-        range: options.range,
-      });
-      setSelectedId(next.focusedId);
-      setSelectedIds(next.selectedIds);
-      selectionAnchorRef.current = next.anchorId;
-    },
-    [selectedId, selectedIds, visibleItems],
   );
 
   const copySelected = useCallback(
@@ -288,12 +242,10 @@ export default function App() {
     const ids = [...selectedIds];
     const merged = await mergeItems(ids);
     prependReplacing(merged, ids);
-    setSelectedId(merged.id);
-    setSelectedIds([merged.id]);
-    selectionAnchorRef.current = merged.id;
+    setSingle(merged.id);
     setContextMenu(null);
     announce("Notes merged");
-  }, [selectedIds]);
+  }, [announce, prependReplacing, selectedIds, setContextMenu, setSingle]);
 
   const moveSelected = useCallback(
     async (sectionId: string | null) => {
@@ -340,17 +292,7 @@ export default function App() {
       const movingPrevious = matchesShortcut(event, shortcuts.previous, true);
       if (movingNext || movingPrevious) {
         event.preventDefault();
-        const next = moveSelection({
-          orderedIds: visibleItems.map((item) => item.id),
-          selectedIds,
-          focusedId: selectedId,
-          anchorId: selectionAnchorRef.current,
-          direction: movingNext ? 1 : -1,
-          extend: event.shiftKey,
-        });
-        setSelectedId(next.focusedId);
-        setSelectedIds(next.selectedIds);
-        selectionAnchorRef.current = next.anchorId;
+        moveBy(movingNext ? 1 : -1, event.shiftKey);
         return;
       }
 
@@ -410,11 +352,12 @@ export default function App() {
     handlePaste,
     markSelectedDone,
     mergeSelected,
+    moveBy,
     selectedId,
     selectedIds,
     selectedItems,
+    setEditingItem,
     settingsOpen,
-    visibleItems,
   ]);
 
   return (
@@ -480,17 +423,15 @@ export default function App() {
                   item.sectionId ? sectionNames.get(item.sectionId) : undefined
                 }
                 onSelect={(event) =>
-                  selectItem(item.id, {
+                  selectWith(item.id, {
                     toggle: event.metaKey || event.ctrlKey,
                     range: event.shiftKey,
                   })
                 }
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  if (!selectedIds.includes(item.id)) {
-                    setSelectedId(item.id);
-                    setSelectedIds([item.id]);
-                    selectionAnchorRef.current = item.id;
+                  if (!isSelected(item.id)) {
+                    setSingle(item.id);
                   }
                   setContextMenu({ x: event.clientX, y: event.clientY });
                 }}
