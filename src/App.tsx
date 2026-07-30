@@ -50,6 +50,7 @@ import type {
   Section,
 } from "./types";
 import { useNotify } from "./hooks/use-notify";
+import { useOverlays } from "./hooks/use-overlays";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -88,13 +89,17 @@ export default function App() {
   const [composerKind, setComposerKind] = useState<ItemKind>("prompt");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [editingItem, setEditingItem] = useState<CaptureItem | null>(null);
-  const [previewItems, setPreviewItems] = useState<CaptureItem[]>([]);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-  } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const {
+    editingItem,
+    setEditingItem,
+    previewItems,
+    setPreviewItems,
+    contextMenu,
+    setContextMenu,
+    settingsOpen,
+    setSettingsOpen,
+    dismissTop,
+  } = useOverlays();
   const [permissions, setPermissions] =
     useState<PermissionStatus>(initialPermissions);
   const [appSettings, setAppSettings] =
@@ -368,17 +373,7 @@ export default function App() {
 
       if (matchesShortcut(event, shortcuts.dismiss)) {
         event.preventDefault();
-        if (contextMenu) {
-          setContextMenu(null);
-        } else if (previewItems.length) {
-          setPreviewItems([]);
-        } else if (editingItem) {
-          setEditingItem(null);
-        } else if (settingsOpen) {
-          setSettingsOpen(false);
-        } else {
-          void hideMainWindow();
-        }
+        dismissTop();
         return;
       }
 
@@ -470,14 +465,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     appSettings.shortcuts,
-    contextMenu,
     copySelected,
+    dismissTop,
     editingItem,
     handleDeleteSelected,
     handlePaste,
     markSelectedDone,
     mergeSelected,
-    previewItems.length,
     selectedId,
     selectedIds,
     selectedItems,
