@@ -1,17 +1,12 @@
 import { ArrowDown, ArrowUp, Inbox, Keyboard } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useRef } from "react";
 import { hideMainWindow, quitApp, updateItem } from "./lib/api";
-import { matchesShortcut, shortcutLabel } from "./lib/shortcuts";
-import type { CaptureItem } from "./types";
+import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
+import { useBulkActions } from "./hooks/use-bulk-actions";
 import { useComposer } from "./hooks/use-composer";
 import { useItemActions } from "./hooks/use-item-actions";
+import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { useNotify } from "./hooks/use-notify";
 import { useOverlays } from "./hooks/use-overlays";
 import { usePermissions } from "./hooks/use-permissions";
@@ -26,10 +21,7 @@ import { QuickCapture } from "./components/quick-capture";
 import { QueueContextMenu } from "./components/queue-context-menu";
 import { QueueHeader } from "./components/queue-header";
 import { QueueItem } from "./components/queue-item";
-import {
-  SectionBar,
-  type SectionFilter,
-} from "./components/section-bar";
+import { SectionBar } from "./components/section-bar";
 import { SettingsSheet } from "./components/settings-sheet";
 import { Kbd } from "./components/ui/kbd";
 
@@ -105,30 +97,19 @@ export default function App() {
     handleCreate,
     handleToggle,
     handleDelete,
-    handleDeleteSelected,
     handlePaste,
-    copySelected,
-    markSelectedDone,
-    mergeSelected,
-    moveSelected,
     handleCaptured,
     handleCreateSection,
   } = useItemActions({
     prependItem,
     prependDeduped,
-    prependReplacing,
     replaceItem,
     removeItems,
-    applyUpdatedItems,
     addSection,
     sectionFilter,
     setFilter,
     setSectionFilter,
-    selectedIds,
-    selectedItems,
     setSingle,
-    clearSelection,
-    setContextMenu,
     announce,
     notify,
     composer,
@@ -137,6 +118,24 @@ export default function App() {
     setSaving,
     setComposer,
     focusComposer,
+  });
+
+  const {
+    handleDeleteSelected,
+    copySelected,
+    markSelectedDone,
+    mergeSelected,
+    moveSelected,
+  } = useBulkActions({
+    removeItems,
+    applyUpdatedItems,
+    prependReplacing,
+    selectedIds,
+    selectedItems,
+    setSingle,
+    clearSelection,
+    setContextMenu,
+    announce,
   });
 
   const {
@@ -159,108 +158,23 @@ export default function App() {
     focusComposer,
   });
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const shortcuts = appSettings.shortcuts;
-
-      if (matchesShortcut(event, shortcuts.dismiss)) {
-        event.preventDefault();
-        dismissTop();
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.close)) {
-        event.preventDefault();
-        void hideMainWindow();
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.search)) {
-        event.preventDefault();
-        searchRef.current?.focus();
-        return;
-      }
-
-      const target = event.target as HTMLElement | null;
-      if (
-        target?.matches("input, textarea, [contenteditable='true']") ||
-        editingItem ||
-        settingsOpen
-      ) {
-        return;
-      }
-
-      const movingNext = matchesShortcut(event, shortcuts.next, true);
-      const movingPrevious = matchesShortcut(event, shortcuts.previous, true);
-      if (movingNext || movingPrevious) {
-        event.preventDefault();
-        moveBy(movingNext ? 1 : -1, event.shiftKey);
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.copyAsList)) {
-        event.preventDefault();
-        void copySelected(true);
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.copy)) {
-        event.preventDefault();
-        void copySelected(false);
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.merge)) {
-        event.preventDefault();
-        void mergeSelected();
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.markDone) && selectedIds.length) {
-        event.preventDefault();
-        void markSelectedDone();
-        return;
-      }
-
-      if (
-        matchesShortcut(event, shortcuts.edit) &&
-        selectedItems.length === 1
-      ) {
-        event.preventDefault();
-        setEditingItem(selectedItems[0]!);
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.paste) && selectedId) {
-        event.preventDefault();
-        void handlePaste(selectedId);
-        return;
-      }
-
-      if (matchesShortcut(event, shortcuts.delete) && selectedId) {
-        event.preventDefault();
-        void handleDeleteSelected();
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [
-    appSettings.shortcuts,
-    copySelected,
-    dismissTop,
+  useKeyboardShortcuts({
+    shortcuts: appSettings.shortcuts,
     editingItem,
-    handleDeleteSelected,
-    handlePaste,
-    markSelectedDone,
-    mergeSelected,
-    moveBy,
+    settingsOpen,
+    dismissTop,
+    setEditingItem,
+    searchRef,
     selectedId,
     selectedIds,
     selectedItems,
-    setEditingItem,
-    settingsOpen,
-  ]);
+    moveBy,
+    copySelected,
+    mergeSelected,
+    markSelectedDone,
+    handlePaste,
+    handleDeleteSelected,
+  });
 
   return (
     <main
