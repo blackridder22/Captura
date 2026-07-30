@@ -11,10 +11,7 @@ import {
   createSection,
   createItem,
   deleteItem,
-  getAppSettings,
   hideMainWindow,
-  listItems,
-  listSections,
   mergeItems,
   moveItemsToSection,
   onCaptured,
@@ -28,27 +25,15 @@ import {
   toggleItem,
   updateItem,
 } from "./lib/api";
-import {
-  applySectionFilter,
-  countItems,
-  filterItems,
-} from "./lib/items";
 import { moveSelection, resolveSelection } from "./lib/selection";
-import {
-  defaultShortcuts,
-  matchesShortcut,
-  shortcutLabel,
-} from "./lib/shortcuts";
-import type {
-  AppSettings,
-  CaptureItem,
-  QueueFilter,
-  Section,
-} from "./types";
+import { matchesShortcut, shortcutLabel } from "./lib/shortcuts";
+import type { CaptureItem } from "./types";
 import { useComposer } from "./hooks/use-composer";
 import { useNotify } from "./hooks/use-notify";
 import { useOverlays } from "./hooks/use-overlays";
 import { usePermissions } from "./hooks/use-permissions";
+import { useQueueData } from "./hooks/use-queue-data";
+import { useQueueFilters } from "./hooks/use-queue-filters";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -63,20 +48,35 @@ import {
 import { SettingsSheet } from "./components/settings-sheet";
 import { Kbd } from "./components/ui/kbd";
 
-const initialSettings: AppSettings = {
-  shortcuts: { ...defaultShortcuts },
-  keepOpen: false,
-};
-
 export default function App() {
-  const [items, setItems] = useState<CaptureItem[]>([]);
-  const [filter, setFilter] = useState<QueueFilter>("inbox");
-  const [query, setQuery] = useState("");
+  const {
+    items,
+    sections,
+    loading,
+    appSettings,
+    setAppSettings,
+    refreshData,
+    prependItem,
+    prependDeduped,
+    prependReplacing,
+    replaceItem,
+    removeItems,
+    applyUpdatedItems,
+    addSection,
+    sectionNames,
+  } = useQueueData();
+  const {
+    filter,
+    setFilter,
+    query,
+    setQuery,
+    sectionFilter,
+    setSectionFilter,
+    visibleItems,
+    counts,
+  } = useQueueFilters(items);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [sections, setSections] = useState<Section[]>([]);
-  const [sectionFilter, setSectionFilter] =
-    useState<SectionFilter>("all");
   const {
     composer,
     setComposer,
@@ -87,7 +87,6 @@ export default function App() {
     composerRef,
     focusComposer,
   } = useComposer();
-  const [loading, setLoading] = useState(true);
   const {
     editingItem,
     setEditingItem,
@@ -100,22 +99,12 @@ export default function App() {
     dismissTop,
   } = useOverlays();
   const { permissions, refreshPermissions } = usePermissions(settingsOpen);
-  const [appSettings, setAppSettings] =
-    useState<AppSettings>(initialSettings);
   const { announcement, toast, announce, notify } = useNotify();
   const searchRef = useRef<HTMLInputElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [nextItems, nextSections, nextSettings] = await Promise.all([
-      listItems(),
-      listSections(),
-      getAppSettings(),
-    ]);
-    setItems(nextItems);
-    setSections(nextSections);
-    setAppSettings(nextSettings);
-    setLoading(false);
+    const nextItems = await refreshData();
     setSelectedId((current) => current ?? nextItems[0]?.id ?? null);
     setSelectedIds((current) =>
       current.length ? current : nextItems[0] ? [nextItems[0].id] : [],
@@ -123,7 +112,7 @@ export default function App() {
     if (!selectionAnchorRef.current) {
       selectionAnchorRef.current = nextItems[0]?.id ?? null;
     }
-  }, []);
+  }, [refreshData]);
 
   useEffect(() => {
     void refresh();
@@ -132,10 +121,7 @@ export default function App() {
     let stopCapture: () => void = () => {};
     let stopFocus: () => void = () => {};
     void onCaptured((item) => {
-      setItems((current) => [
-        item,
-        ...current.filter((candidate) => candidate.id !== item.id),
-      ]);
+      prependDeduped(item);
       setFilter("inbox");
       setSelectedId(item.id);
       setSelectedIds([item.id]);
@@ -160,12 +146,7 @@ export default function App() {
       stopFocus();
       window.removeEventListener("focus", handleFocus);
     };
-  }, [focusComposer, refresh, refreshPermissions]);
-
-  const visibleItems = useMemo(
-    () => applySectionFilter(filterItems(items, filter, query), sectionFilter),
-    [filter, items, query, sectionFilter],
-  );
+  }, [focusComposer, prependDeduped, refresh, refreshPermissions, setFilter]);
 
   useEffect(() => {
     if (!visibleItems.length) {
@@ -199,13 +180,6 @@ export default function App() {
     [selectedIds, visibleItems],
   );
 
-  const sectionNames = useMemo(
-    () => new Map(sections.map((section) => [section.id, section.name])),
-    [sections],
-  );
-
-  const counts = useMemo(() => countItems(items), [items]);
-
   const handleCreate = useCallback(async () => {
     const content = composer.trim();
     if (!content || saving) return;
@@ -215,7 +189,7 @@ export default function App() {
       sectionFilter !== "all" && sectionFilter !== "unfiled"
         ? (await moveItemsToSection([item.id], sectionFilter))[0] ?? item
         : item;
-    setItems((current) => [created, ...current]);
+    prependItem(created);
     setSelectedId(created.id);
     setSelectedIds([created.id]);
     selectionAnchorRef.current = created.id;
@@ -226,12 +200,6 @@ export default function App() {
     focusComposer();
   }, [composer, composerKind, saving, sectionFilter]);
 
-  const replaceItem = useCallback((nextItem: CaptureItem) => {
-    setItems((current) =>
-      current.map((item) => (item.id === nextItem.id ? nextItem : item)),
-    );
-  }, []);
-
   const handleToggle = useCallback(
     async (id: string) => {
       replaceItem(await toggleItem(id));
@@ -239,16 +207,19 @@ export default function App() {
     [replaceItem],
   );
 
-  const handleDelete = useCallback(async (id: string) => {
-    await deleteItem(id);
-    setItems((current) => current.filter((item) => item.id !== id));
-    announce("Capture deleted");
-  }, []);
+  const handleDelete = useCallback(
+    async (id: string) => {
+      await deleteItem(id);
+      removeItems([id]);
+      announce("Capture deleted");
+    },
+    [announce, removeItems],
+  );
 
   const handleDeleteSelected = useCallback(async () => {
     const ids = [...selectedIds];
     await Promise.all(ids.map((id) => deleteItem(id)));
-    setItems((current) => current.filter((item) => !ids.includes(item.id)));
+    removeItems(ids);
     setSelectedIds([]);
     setSelectedId(null);
     selectionAnchorRef.current = null;
@@ -307,23 +278,16 @@ export default function App() {
   const markSelectedDone = useCallback(async () => {
     const openItems = selectedItems.filter((item) => item.status === "open");
     const updated = await Promise.all(openItems.map((item) => toggleItem(item.id)));
-    setItems((current) =>
-      current.map(
-        (item) => updated.find((candidate) => candidate.id === item.id) ?? item,
-      ),
-    );
+    applyUpdatedItems(updated);
     setContextMenu(null);
     announce("Marked as done");
-  }, [selectedItems]);
+  }, [announce, applyUpdatedItems, selectedItems, setContextMenu]);
 
   const mergeSelected = useCallback(async () => {
     if (selectedIds.length < 2) return;
     const ids = [...selectedIds];
     const merged = await mergeItems(ids);
-    setItems((current) => [
-      merged,
-      ...current.filter((item) => !ids.includes(item.id)),
-    ]);
+    prependReplacing(merged, ids);
     setSelectedId(merged.id);
     setSelectedIds([merged.id]);
     selectionAnchorRef.current = merged.id;
@@ -334,15 +298,11 @@ export default function App() {
   const moveSelected = useCallback(
     async (sectionId: string | null) => {
       const updated = await moveItemsToSection(selectedIds, sectionId);
-      setItems((current) =>
-        current.map(
-          (item) => updated.find((candidate) => candidate.id === item.id) ?? item,
-        ),
-      );
+      applyUpdatedItems(updated);
       setContextMenu(null);
       announce(sectionId ? "Moved to section" : "Moved to Unfiled");
     },
-    [selectedIds],
+    [announce, applyUpdatedItems, selectedIds, setContextMenu],
   );
 
   useEffect(() => {
@@ -491,7 +451,7 @@ export default function App() {
           onChange={setSectionFilter}
           onCreate={async (name) => {
             const section = await createSection(name);
-            setSections((current) => [...current, section]);
+            addSection(section);
             setSectionFilter(section.id);
             announce("Section created");
           }}
