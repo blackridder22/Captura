@@ -1,5 +1,7 @@
 mod database;
 mod platform;
+#[cfg(target_os = "macos")]
+mod smoke;
 
 use std::{
     path::PathBuf,
@@ -711,6 +713,9 @@ pub fn run() {
                 remember_frontmost_application(&tracker);
                 thread::sleep(Duration::from_millis(350));
             });
+
+            #[cfg(target_os = "macos")]
+            smoke::start_if_requested(app.handle().clone());
 
             Ok(())
         })

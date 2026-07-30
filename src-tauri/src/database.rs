@@ -176,6 +176,13 @@ impl Database {
         self.connection.lock().map_err(|_| DatabaseError::Poisoned)
     }
 
+    pub fn integrity_check(&self) -> Result<bool, DatabaseError> {
+        let connection = self.connection()?;
+        let result: String =
+            connection.pragma_query_value(None, "integrity_check", |row| row.get(0))?;
+        Ok(result == "ok")
+    }
+
     pub fn list_items(&self) -> Result<Vec<CaptureItem>, DatabaseError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
@@ -446,6 +453,13 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_clean_integrity_on_fresh_database() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let database = Database::open(&directory.path().join("captura.db")).expect("database");
+        assert!(database.integrity_check().expect("integrity check"));
+    }
 
     #[test]
     fn persists_and_updates_capture_items() {

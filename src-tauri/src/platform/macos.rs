@@ -6,9 +6,9 @@ use core_graphics::{
 };
 use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationOptions, NSColor, NSPasteboard, NSPasteboardType,
-    NSPasteboardTypeString, NSRunningApplication, NSScreenSaverWindowLevel, NSWindow,
-    NSWindowCollectionBehavior, NSWorkspace,
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSColor,
+    NSPasteboard, NSPasteboardType, NSPasteboardTypeString, NSRunningApplication,
+    NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
 };
 use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSNumber, NSString};
@@ -107,6 +107,27 @@ pub fn configure_overlay_window(window: &WebviewWindow) -> tauri::Result<()> {
     ns_window.setOpaque(false);
     ns_window.setBackgroundColor(Some(&NSColor::clearColor()));
     Ok(())
+}
+
+/// Reads back the invariants `configure_overlay_window` establishes, so the
+/// smoke test can assert against the live NSWindow rather than our own config.
+pub fn overlay_window_verified(window: &WebviewWindow) -> tauri::Result<bool> {
+    let ns_window = unsafe { &*(window.ns_window()? as *mut NSWindow) };
+    let behavior = ns_window.collectionBehavior();
+    let required = NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::CanJoinAllApplications
+        | NSWindowCollectionBehavior::FullScreenAuxiliary
+        | NSWindowCollectionBehavior::Stationary;
+    let forbidden =
+        NSWindowCollectionBehavior::Managed | NSWindowCollectionBehavior::MoveToActiveSpace;
+    Ok(behavior.contains(required)
+        && !behavior.intersects(forbidden)
+        && ns_window.level() == NSScreenSaverWindowLevel)
+}
+
+pub fn activation_policy_is_accessory(main_thread: MainThreadMarker) -> bool {
+    NSApplication::sharedApplication(main_thread).activationPolicy()
+        == NSApplicationActivationPolicy::Accessory
 }
 
 pub fn present_overlay_window(window: &WebviewWindow, focus: bool) -> tauri::Result<()> {
