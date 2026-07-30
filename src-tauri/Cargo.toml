@@ -1,0 +1,41 @@
+[package]
+name = "captura"
+version = "0.0.1"
+description = "A fast, local-first macOS capture and prompt queue."
+authors = ["Auto Scale Agency"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "captura_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+directories = "6"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSColor", "NSWindow"] }
+objc2-core-graphics = { version = "0.3", features = ["CGEvent"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSString"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# macOS 27 rejects Rust 1.96 proc-macro dylibs after LLVM strips their
+# debuginfo (rust-lang/rust#157750). Keep release artifacts unstripped until
+# the fixed Rust/LLVM toolchain reaches stable.
+[profile.release]
+strip = "none"

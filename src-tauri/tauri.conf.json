@@ -1,0 +1,76 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Captura",
+  "version": "0.0.1",
+  "identifier": "com.autoscale.captura",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Captura",
+        "acceptFirstMouse": true,
+        "width": 430,
+        "height": 650,
+        "minWidth": 430,
+        "minHeight": 520,
+        "maxWidth": 430,
+        "maxHeight": 650,
+        "visible": false,
+        "focus": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
+      },
+      {
+        "label": "capture-hud",
+        "title": "Captured",
+        "url": "index.html?hud=1",
+        "width": 360,
+        "height": 92,
+        "minWidth": 360,
+        "minHeight": 92,
+        "maxWidth": 360,
+        "maxHeight": 92,
+        "visible": false,
+        "focus": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; connect-src ipc: http://ipc.localhost ws://localhost:1421; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": ["icons/icon.icns"],
+    "category": "Productivity",
+    "shortDescription": "Capture now. Keep moving.",
+    "longDescription": "A local-first menubar queue for notes, links, and prompts.",
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "Apple Development: blackridder22@gmail.com (XBK78KGJW3)"
+    }
+  }
+}
