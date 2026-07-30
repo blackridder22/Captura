@@ -29,7 +29,12 @@ import {
   toggleItem,
   updateItem,
 } from "./lib/api";
-import { filterItems, inferKind } from "./lib/items";
+import {
+  applySectionFilter,
+  countItems,
+  filterItems,
+  inferKind,
+} from "./lib/items";
 import { moveSelection, resolveSelection } from "./lib/selection";
 import {
   defaultShortcuts,
@@ -178,14 +183,10 @@ export default function App() {
     setComposerKind(inferKind(composer));
   }, [composer]);
 
-  const visibleItems = useMemo(() => {
-    const filtered = filterItems(items, filter, query);
-    if (sectionFilter === "all") return filtered;
-    if (sectionFilter === "unfiled") {
-      return filtered.filter((item) => !item.sectionId);
-    }
-    return filtered.filter((item) => item.sectionId === sectionFilter);
-  }, [filter, items, query, sectionFilter]);
+  const visibleItems = useMemo(
+    () => applySectionFilter(filterItems(items, filter, query), sectionFilter),
+    [filter, items, query, sectionFilter],
+  );
 
   useEffect(() => {
     if (!visibleItems.length) {
@@ -224,19 +225,7 @@ export default function App() {
     [sections],
   );
 
-  const counts = useMemo(
-    () => ({
-      inbox: items.filter((item) => item.status === "open").length,
-      prompts: items.filter(
-        (item) => item.status === "open" && item.kind === "prompt",
-      ).length,
-      notes: items.filter(
-        (item) => item.status === "open" && item.kind === "note",
-      ).length,
-      done: items.filter((item) => item.status === "done").length,
-    }),
-    [items],
-  );
+  const counts = useMemo(() => countItems(items), [items]);
 
   const handleCreate = useCallback(async () => {
     const content = composer.trim();

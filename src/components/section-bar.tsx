@@ -1,8 +1,8 @@
 import { Check, FolderPlus, Plus, X } from "lucide-react";
 import { useState } from "react";
-import type { Section } from "../types";
+import type { Section, SectionFilter } from "../types";
 
-export type SectionFilter = "all" | "unfiled" | string;
+export type { SectionFilter };
 
 type SectionBarProps = {
   sections: Section[];

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CaptureItem } from "../types";
-import { filterItems, inferKind } from "./items";
+import {
+  applySectionFilter,
+  countItems,
+  filterItems,
+  inferKind,
+} from "./items";
 
 const items: CaptureItem[] = [
   {
@@ -42,5 +47,35 @@ describe("filterItems", () => {
     expect(filterItems(items, "prompts", "chatgpt")[0]?.id).toBe(
       "prompt",
     );
+  });
+});
+
+describe("applySectionFilter", () => {
+  const sectioned = [
+    { ...items[0]!, id: "filed", sectionId: "section-1" },
+    { ...items[1]!, id: "loose", sectionId: null },
+  ];
+
+  it("passes everything through for all", () => {
+    expect(applySectionFilter(sectioned, "all")).toHaveLength(2);
+  });
+
+  it("narrows to unfiled items", () => {
+    expect(applySectionFilter(sectioned, "unfiled")[0]?.id).toBe("loose");
+  });
+
+  it("narrows to a specific section", () => {
+    expect(applySectionFilter(sectioned, "section-1")[0]?.id).toBe("filed");
+  });
+});
+
+describe("countItems", () => {
+  it("tallies open, kind-specific, and done items", () => {
+    expect(countItems(items)).toEqual({
+      inbox: 1,
+      prompts: 1,
+      notes: 0,
+      done: 1,
+    });
   });
 });
