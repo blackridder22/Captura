@@ -20,7 +20,6 @@ import {
   onCaptured,
   onFocusComposer,
   pasteItem,
-  permissionStatus,
   quitApp,
   requestAccessibility,
   resetShortcuts,
@@ -33,7 +32,6 @@ import {
   applySectionFilter,
   countItems,
   filterItems,
-  inferKind,
 } from "./lib/items";
 import { moveSelection, resolveSelection } from "./lib/selection";
 import {
@@ -44,13 +42,13 @@ import {
 import type {
   AppSettings,
   CaptureItem,
-  ItemKind,
-  PermissionStatus,
   QueueFilter,
   Section,
 } from "./types";
+import { useComposer } from "./hooks/use-composer";
 import { useNotify } from "./hooks/use-notify";
 import { useOverlays } from "./hooks/use-overlays";
+import { usePermissions } from "./hooks/use-permissions";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -64,12 +62,6 @@ import {
 } from "./components/section-bar";
 import { SettingsSheet } from "./components/settings-sheet";
 import { Kbd } from "./components/ui/kbd";
-
-const initialPermissions: PermissionStatus = {
-  accessibilityTrusted: false,
-  postEventTrusted: false,
-  globalShortcutRegistered: false,
-};
 
 const initialSettings: AppSettings = {
   shortcuts: { ...defaultShortcuts },
@@ -85,9 +77,16 @@ export default function App() {
   const [sections, setSections] = useState<Section[]>([]);
   const [sectionFilter, setSectionFilter] =
     useState<SectionFilter>("all");
-  const [composer, setComposer] = useState("");
-  const [composerKind, setComposerKind] = useState<ItemKind>("prompt");
-  const [saving, setSaving] = useState(false);
+  const {
+    composer,
+    setComposer,
+    composerKind,
+    setComposerKind,
+    saving,
+    setSaving,
+    composerRef,
+    focusComposer,
+  } = useComposer();
   const [loading, setLoading] = useState(true);
   const {
     editingItem,
@@ -100,12 +99,10 @@ export default function App() {
     setSettingsOpen,
     dismissTop,
   } = useOverlays();
-  const [permissions, setPermissions] =
-    useState<PermissionStatus>(initialPermissions);
+  const { permissions, refreshPermissions } = usePermissions(settingsOpen);
   const [appSettings, setAppSettings] =
     useState<AppSettings>(initialSettings);
   const { announcement, toast, announce, notify } = useNotify();
-  const composerRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
 
@@ -128,10 +125,6 @@ export default function App() {
     }
   }, []);
 
-  const refreshPermissions = useCallback(async () => {
-    setPermissions(await permissionStatus());
-  }, []);
-
   useEffect(() => {
     void refresh();
     void refreshPermissions();
@@ -152,7 +145,7 @@ export default function App() {
       stopCapture = off;
     });
     void onFocusComposer(() => {
-      requestAnimationFrame(() => composerRef.current?.focus());
+      focusComposer();
     }).then((off) => {
       stopFocus = off;
     });
@@ -167,22 +160,7 @@ export default function App() {
       stopFocus();
       window.removeEventListener("focus", handleFocus);
     };
-  }, [refresh, refreshPermissions]);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-
-    void refreshPermissions();
-    const verifier = window.setInterval(() => {
-      void refreshPermissions();
-    }, 750);
-    return () => window.clearInterval(verifier);
-  }, [refreshPermissions, settingsOpen]);
-
-  useEffect(() => {
-    if (!composer.trim()) return;
-    setComposerKind(inferKind(composer));
-  }, [composer]);
+  }, [focusComposer, refresh, refreshPermissions]);
 
   const visibleItems = useMemo(
     () => applySectionFilter(filterItems(items, filter, query), sectionFilter),
@@ -245,7 +223,7 @@ export default function App() {
     setComposer("");
     setSaving(false);
     announce("Capture saved");
-    requestAnimationFrame(() => composerRef.current?.focus());
+    focusComposer();
   }, [composer, composerKind, saving, sectionFilter]);
 
   const replaceItem = useCallback((nextItem: CaptureItem) => {
