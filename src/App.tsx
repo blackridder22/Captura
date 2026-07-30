@@ -7,33 +7,23 @@ import {
   useState,
 } from "react";
 import {
-  captureClipboardNow,
-  createSection,
-  createItem,
-  deleteItem,
   hideMainWindow,
-  mergeItems,
-  moveItemsToSection,
   onCaptured,
   onFocusComposer,
-  pasteItem,
   quitApp,
-  requestAccessibility,
-  resetShortcuts,
-  setKeepOpen,
-  setShortcut,
-  toggleItem,
   updateItem,
 } from "./lib/api";
 import { matchesShortcut, shortcutLabel } from "./lib/shortcuts";
 import type { CaptureItem } from "./types";
 import { useComposer } from "./hooks/use-composer";
+import { useItemActions } from "./hooks/use-item-actions";
 import { useNotify } from "./hooks/use-notify";
 import { useOverlays } from "./hooks/use-overlays";
 import { usePermissions } from "./hooks/use-permissions";
 import { useQueueData } from "./hooks/use-queue-data";
 import { useQueueFilters } from "./hooks/use-queue-filters";
 import { useSelection } from "./hooks/use-selection";
+import { useSettingsActions } from "./hooks/use-settings-actions";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -156,106 +146,56 @@ export default function App() {
     setSingle,
   ]);
 
-  const handleCreate = useCallback(async () => {
-    const content = composer.trim();
-    if (!content || saving) return;
-    setSaving(true);
-    const item = await createItem({ content, kind: composerKind });
-    const created =
-      sectionFilter !== "all" && sectionFilter !== "unfiled"
-        ? (await moveItemsToSection([item.id], sectionFilter))[0] ?? item
-        : item;
-    prependItem(created);
-    setSingle(created.id);
-    setFilter("inbox");
-    setComposer("");
-    setSaving(false);
-    announce("Capture saved");
-    focusComposer();
-  }, [composer, composerKind, saving, sectionFilter]);
+  const {
+    handleCreate,
+    handleToggle,
+    handleDelete,
+    handleDeleteSelected,
+    handlePaste,
+    copySelected,
+    markSelectedDone,
+    mergeSelected,
+    moveSelected,
+    handleCaptured,
+    handleCreateSection,
+  } = useItemActions({
+    prependItem,
+    prependDeduped,
+    prependReplacing,
+    replaceItem,
+    removeItems,
+    applyUpdatedItems,
+    addSection,
+    sectionFilter,
+    setFilter,
+    setSectionFilter,
+    selectedIds,
+    selectedItems,
+    setSingle,
+    clearSelection,
+    setContextMenu,
+    announce,
+    notify,
+    composer,
+    composerKind,
+    saving,
+    setSaving,
+    setComposer,
+    focusComposer,
+  });
 
-  const handleToggle = useCallback(
-    async (id: string) => {
-      replaceItem(await toggleItem(id));
-    },
-    [replaceItem],
-  );
-
-  const handleDelete = useCallback(
-    async (id: string) => {
-      await deleteItem(id);
-      removeItems([id]);
-      announce("Capture deleted");
-    },
-    [announce, removeItems],
-  );
-
-  const handleDeleteSelected = useCallback(async () => {
-    const ids = [...selectedIds];
-    await Promise.all(ids.map((id) => deleteItem(id)));
-    removeItems(ids);
-    clearSelection();
-    setContextMenu(null);
-    announce(`${ids.length} capture${ids.length === 1 ? "" : "s"} deleted`);
-  }, [announce, clearSelection, removeItems, selectedIds, setContextMenu]);
-
-  const handlePaste = useCallback(
-    async (id: string) => {
-      try {
-        replaceItem(await pasteItem(id));
-        notify("Pasted into the previous app");
-      } catch (error) {
-        notify(
-          typeof error === "string" ? error : "Paste failed. Try again.",
-          "error",
-        );
-      }
-    },
-    [notify, replaceItem],
-  );
-
-  const copySelected = useCallback(
-    async (asList: boolean) => {
-      if (!selectedItems.length) return;
-      const content = asList
-        ? selectedItems
-            .map((item) => `- ${item.content.trim().replace(/\n+/g, " ")}`)
-            .join("\n")
-        : selectedItems.map((item) => item.content).join("\n\n");
-      await navigator.clipboard.writeText(content);
-      setContextMenu(null);
-      announce(asList ? "Copied as list" : "Copied");
-    },
-    [selectedItems],
-  );
-
-  const markSelectedDone = useCallback(async () => {
-    const openItems = selectedItems.filter((item) => item.status === "open");
-    const updated = await Promise.all(openItems.map((item) => toggleItem(item.id)));
-    applyUpdatedItems(updated);
-    setContextMenu(null);
-    announce("Marked as done");
-  }, [announce, applyUpdatedItems, selectedItems, setContextMenu]);
-
-  const mergeSelected = useCallback(async () => {
-    if (selectedIds.length < 2) return;
-    const ids = [...selectedIds];
-    const merged = await mergeItems(ids);
-    prependReplacing(merged, ids);
-    setSingle(merged.id);
-    setContextMenu(null);
-    announce("Notes merged");
-  }, [announce, prependReplacing, selectedIds, setContextMenu, setSingle]);
-
-  const moveSelected = useCallback(
-    async (sectionId: string | null) => {
-      const updated = await moveItemsToSection(selectedIds, sectionId);
-      applyUpdatedItems(updated);
-      setContextMenu(null);
-      announce(sectionId ? "Moved to section" : "Moved to Unfiled");
-    },
-    [announce, applyUpdatedItems, selectedIds, setContextMenu],
-  );
+  const {
+    requestAccessibilityAndRefresh,
+    changeShortcut,
+    resetAllShortcuts,
+    changeKeepOpen,
+    captureClipboard,
+  } = useSettingsActions({
+    setAppSettings,
+    refreshPermissions,
+    announce,
+    notify,
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -392,12 +332,7 @@ export default function App() {
           sections={sections}
           active={sectionFilter}
           onChange={setSectionFilter}
-          onCreate={async (name) => {
-            const section = await createSection(name);
-            addSection(section);
-            setSectionFilter(section.id);
-            announce("Section created");
-          }}
+          onCreate={handleCreateSection}
         />
 
         <section
@@ -549,43 +484,11 @@ export default function App() {
           permissions={permissions}
           settings={appSettings}
           onClose={() => setSettingsOpen(false)}
-          onRequestAccessibility={async () => {
-            await requestAccessibility();
-            await refreshPermissions();
-          }}
-          onShortcutChange={async (action, shortcut) => {
-            setAppSettings(await setShortcut(action, shortcut));
-            if (action === "capture") {
-              await refreshPermissions();
-            }
-            notify("Shortcut updated");
-          }}
-          onResetShortcuts={async () => {
-            try {
-              setAppSettings(await resetShortcuts());
-              await refreshPermissions();
-              notify("Default shortcuts restored");
-            } catch (error) {
-              notify(
-                typeof error === "string"
-                  ? error
-                  : "Could not restore default shortcuts.",
-                "error",
-              );
-            }
-          }}
-          onKeepOpenChange={async (keepOpen) => {
-            setAppSettings(await setKeepOpen(keepOpen));
-            announce(
-              keepOpen
-                ? "Captura will stay open"
-                : "Captura will close when you click away",
-            );
-          }}
-          onCaptureClipboard={async () => {
-            await captureClipboardNow();
-            announce("Clipboard captured");
-          }}
+          onRequestAccessibility={requestAccessibilityAndRefresh}
+          onShortcutChange={changeShortcut}
+          onResetShortcuts={resetAllShortcuts}
+          onKeepOpenChange={changeKeepOpen}
+          onCaptureClipboard={captureClipboard}
           onQuit={quitApp}
         />
       ) : null}
