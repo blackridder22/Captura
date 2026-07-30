@@ -49,6 +49,7 @@ import type {
   QueueFilter,
   Section,
 } from "./types";
+import { useNotify } from "./hooks/use-notify";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -98,12 +99,7 @@ export default function App() {
     useState<PermissionStatus>(initialPermissions);
   const [appSettings, setAppSettings] =
     useState<AppSettings>(initialSettings);
-  const [announcement, setAnnouncement] = useState("");
-  const [toast, setToast] = useState<{
-    text: string;
-    tone: "info" | "error";
-  } | null>(null);
-  const toastTimerRef = useRef<number | null>(null);
+  const { announcement, toast, announce, notify } = useNotify();
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
@@ -146,7 +142,7 @@ export default function App() {
       setSelectedId(item.id);
       setSelectedIds([item.id]);
       selectionAnchorRef.current = item.id;
-      setAnnouncement("Capture saved");
+      announce("Capture saved");
     }).then((off) => {
       stopCapture = off;
     });
@@ -243,7 +239,7 @@ export default function App() {
     setFilter("inbox");
     setComposer("");
     setSaving(false);
-    setAnnouncement("Capture saved");
+    announce("Capture saved");
     requestAnimationFrame(() => composerRef.current?.focus());
   }, [composer, composerKind, saving, sectionFilter]);
 
@@ -263,7 +259,7 @@ export default function App() {
   const handleDelete = useCallback(async (id: string) => {
     await deleteItem(id);
     setItems((current) => current.filter((item) => item.id !== id));
-    setAnnouncement("Capture deleted");
+    announce("Capture deleted");
   }, []);
 
   const handleDeleteSelected = useCallback(async () => {
@@ -274,20 +270,8 @@ export default function App() {
     setSelectedId(null);
     selectionAnchorRef.current = null;
     setContextMenu(null);
-    setAnnouncement(`${ids.length} capture${ids.length === 1 ? "" : "s"} deleted`);
+    announce(`${ids.length} capture${ids.length === 1 ? "" : "s"} deleted`);
   }, [selectedIds]);
-
-  const notify = useCallback((text: string, tone: "info" | "error" = "info") => {
-    setAnnouncement(text);
-    setToast({ text, tone });
-    if (toastTimerRef.current !== null) {
-      window.clearTimeout(toastTimerRef.current);
-    }
-    toastTimerRef.current = window.setTimeout(
-      () => setToast(null),
-      tone === "error" ? 4200 : 2200,
-    );
-  }, []);
 
   const handlePaste = useCallback(
     async (id: string) => {
@@ -332,7 +316,7 @@ export default function App() {
         : selectedItems.map((item) => item.content).join("\n\n");
       await navigator.clipboard.writeText(content);
       setContextMenu(null);
-      setAnnouncement(asList ? "Copied as list" : "Copied");
+      announce(asList ? "Copied as list" : "Copied");
     },
     [selectedItems],
   );
@@ -346,7 +330,7 @@ export default function App() {
       ),
     );
     setContextMenu(null);
-    setAnnouncement("Marked as done");
+    announce("Marked as done");
   }, [selectedItems]);
 
   const mergeSelected = useCallback(async () => {
@@ -361,7 +345,7 @@ export default function App() {
     setSelectedIds([merged.id]);
     selectionAnchorRef.current = merged.id;
     setContextMenu(null);
-    setAnnouncement("Notes merged");
+    announce("Notes merged");
   }, [selectedIds]);
 
   const moveSelected = useCallback(
@@ -373,7 +357,7 @@ export default function App() {
         ),
       );
       setContextMenu(null);
-      setAnnouncement(sectionId ? "Moved to section" : "Moved to Unfiled");
+      announce(sectionId ? "Moved to section" : "Moved to Unfiled");
     },
     [selectedIds],
   );
@@ -537,7 +521,7 @@ export default function App() {
             const section = await createSection(name);
             setSections((current) => [...current, section]);
             setSectionFilter(section.id);
-            setAnnouncement("Section created");
+            announce("Section created");
           }}
         />
 
@@ -583,7 +567,7 @@ export default function App() {
                 onDelete={() => void handleDelete(item.id)}
                 onCopy={() => {
                   void navigator.clipboard.writeText(item.content);
-                  setAnnouncement("Copied");
+                  announce("Copied");
                 }}
                 onPaste={() => void handlePaste(item.id)}
                 pasteShortcut={appSettings.shortcuts.paste}
@@ -682,7 +666,7 @@ export default function App() {
               await updateItem({ id: editingItem.id, content, kind }),
             );
             setEditingItem(null);
-            setAnnouncement("Capture updated");
+            announce("Capture updated");
           }}
         />
       ) : null}
@@ -719,7 +703,7 @@ export default function App() {
           }}
           onKeepOpenChange={async (keepOpen) => {
             setAppSettings(await setKeepOpen(keepOpen));
-            setAnnouncement(
+            announce(
               keepOpen
                 ? "Captura will stay open"
                 : "Captura will close when you click away",
@@ -727,7 +711,7 @@ export default function App() {
           }}
           onCaptureClipboard={async () => {
             await captureClipboardNow();
-            setAnnouncement("Clipboard captured");
+            announce("Clipboard captured");
           }}
           onQuit={quitApp}
         />
