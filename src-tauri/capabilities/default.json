@@ -3,6 +3,6 @@
   "identifier": "default",
   "description": "Core access for Captura's local windows.",
   "windows": ["main", "capture-hud"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default", "process:allow-restart"]
 }
 

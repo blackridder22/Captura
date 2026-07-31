@@ -39,6 +39,7 @@ struct KeyboardShortcuts {
     paste: String,
     search: String,
     close: String,
+    settings: String,
     dismiss: String,
     next: String,
     previous: String,
@@ -58,6 +59,12 @@ impl Default for KeyboardShortcuts {
             paste: "Command+Enter".to_string(),
             search: "Command+F".to_string(),
             close: "Command+W".to_string(),
+            settings: if cfg!(target_os = "macos") {
+                "Command+,"
+            } else {
+                "Control+,"
+            }
+            .to_string(),
             dismiss: "Escape".to_string(),
             next: "ArrowDown".to_string(),
             previous: "ArrowUp".to_string(),
@@ -79,6 +86,7 @@ impl KeyboardShortcuts {
             "paste" => Some(&self.paste),
             "search" => Some(&self.search),
             "close" => Some(&self.close),
+            "settings" => Some(&self.settings),
             "dismiss" => Some(&self.dismiss),
             "next" => Some(&self.next),
             "previous" => Some(&self.previous),
@@ -99,6 +107,7 @@ impl KeyboardShortcuts {
             "paste" => &mut self.paste,
             "search" => &mut self.search,
             "close" => &mut self.close,
+            "settings" => &mut self.settings,
             "dismiss" => &mut self.dismiss,
             "next" => &mut self.next,
             "previous" => &mut self.previous,
@@ -656,6 +665,8 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(state)
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {

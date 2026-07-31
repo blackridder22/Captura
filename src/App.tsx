@@ -14,6 +14,7 @@ import { useQueueData } from "./hooks/use-queue-data";
 import { useQueueFilters } from "./hooks/use-queue-filters";
 import { useSelection } from "./hooks/use-selection";
 import { useSettingsActions } from "./hooks/use-settings-actions";
+import { useUpdater } from "./hooks/use-updater";
 import { EditSheet } from "./components/edit-sheet";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
@@ -82,10 +83,16 @@ export default function App() {
     setContextMenu,
     settingsOpen,
     setSettingsOpen,
+    openSettings,
     dismissTop,
   } = useOverlays();
   const { permissions, refreshPermissions } = usePermissions(settingsOpen);
   const { announcement, toast, announce, notify } = useNotify();
+  const {
+    status: updateStatus,
+    checkForUpdates,
+    installUpdate,
+  } = useUpdater({ notify });
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -163,6 +170,7 @@ export default function App() {
     editingItem,
     settingsOpen,
     dismissTop,
+    openSettings,
     setEditingItem,
     searchRef,
     selectedId,
@@ -366,6 +374,9 @@ export default function App() {
           onKeepOpenChange={changeKeepOpen}
           onCaptureClipboard={captureClipboard}
           onQuit={quitApp}
+          updateStatus={updateStatus}
+          onCheckUpdates={() => checkForUpdates(false)}
+          onInstallUpdate={installUpdate}
         />
       ) : null}
 

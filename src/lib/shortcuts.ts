@@ -1,11 +1,16 @@
 import type { KeyboardShortcutSettings, ShortcutAction } from "../types";
 
+const isMacPlatform =
+  typeof navigator !== "undefined" &&
+  /Mac|iP(hone|ad|od)/.test(navigator.platform ?? "");
+
 export const defaultShortcuts: KeyboardShortcutSettings = {
   capture: "Alt+Space",
   save: "Command+Enter",
   paste: "Command+Enter",
   search: "Command+F",
   close: "Command+W",
+  settings: isMacPlatform ? "Command+," : "Control+,",
   dismiss: "Escape",
   next: "ArrowDown",
   previous: "ArrowUp",
@@ -46,6 +51,11 @@ export const shortcutActions: {
     action: "close",
     label: "Close panel",
     description: "Hide Captura without quitting.",
+  },
+  {
+    action: "settings",
+    label: "Settings",
+    description: "Open Captura settings.",
   },
   {
     action: "dismiss",

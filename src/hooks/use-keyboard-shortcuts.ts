@@ -10,6 +10,7 @@ type KeyboardShortcutDeps = {
   editingItem: CaptureItem | null;
   settingsOpen: boolean;
   dismissTop: () => void;
+  openSettings: () => void;
   setEditingItem: (item: CaptureItem | null) => void;
   searchRef: RefObject<HTMLInputElement | null>;
   selectedId: string | null;
@@ -28,6 +29,7 @@ export function useKeyboardShortcuts({
   editingItem,
   settingsOpen,
   dismissTop,
+  openSettings,
   setEditingItem,
   searchRef,
   selectedId,
@@ -57,6 +59,14 @@ export function useKeyboardShortcuts({
       if (matchesShortcut(event, shortcuts.search)) {
         event.preventDefault();
         searchRef.current?.focus();
+        return;
+      }
+
+      // Like the shortcuts above, this works even while typing — the
+      // platform convention for the preferences shortcut.
+      if (matchesShortcut(event, shortcuts.settings)) {
+        event.preventDefault();
+        openSettings();
         return;
       }
 
@@ -134,6 +144,7 @@ export function useKeyboardShortcuts({
     markSelectedDone,
     mergeSelected,
     moveBy,
+    openSettings,
     searchRef,
     selectedId,
     selectedIds,

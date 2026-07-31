@@ -9,6 +9,7 @@ export type ShortcutAction =
   | "paste"
   | "search"
   | "close"
+  | "settings"
   | "dismiss"
   | "next"
   | "previous"
