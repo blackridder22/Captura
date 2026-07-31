@@ -1,6 +1,7 @@
 import {
   Check,
   Clipboard,
+  DownloadCloud,
   Keyboard,
   LockKeyhole,
   LogOut,
@@ -9,6 +10,7 @@ import {
   ShieldCheck,
   X,
 } from "lucide-react";
+import type { UpdateStatus } from "../hooks/use-updater";
 import type {
   AppSettings,
   PermissionStatus,
@@ -31,7 +33,27 @@ type SettingsSheetProps = {
   onKeepOpenChange: (keepOpen: boolean) => Promise<void>;
   onCaptureClipboard: () => Promise<void>;
   onQuit: () => Promise<void>;
+  updateStatus: UpdateStatus;
+  onCheckUpdates: () => Promise<void>;
+  onInstallUpdate: () => Promise<void>;
 };
+
+function updateStatusLine(status: UpdateStatus) {
+  switch (status.phase) {
+    case "checking":
+      return "Checking for updates…";
+    case "upToDate":
+      return "Captura is up to date.";
+    case "available":
+      return `Version ${status.version} is available.`;
+    case "installing":
+      return `Installing ${status.version}… Captura will relaunch.`;
+    case "error":
+      return status.message;
+    default:
+      return "Updates are checked automatically at launch.";
+  }
+}
 
 export function SettingsSheet({
   permissions,
@@ -43,6 +65,9 @@ export function SettingsSheet({
   onKeepOpenChange,
   onCaptureClipboard,
   onQuit,
+  updateStatus,
+  onCheckUpdates,
+  onInstallUpdate,
 }: SettingsSheetProps) {
   const permissionsReady =
     permissions.accessibilityTrusted && permissions.postEventTrusted;
@@ -169,6 +194,37 @@ export function SettingsSheet({
             )}
           </div>
 
+          <div className="settings-row">
+            <span className="settings-icon">
+              <DownloadCloud size={16} />
+            </span>
+            <div>
+              <strong>Software update</strong>
+              <p>{updateStatusLine(updateStatus)}</p>
+            </div>
+            {updateStatus.phase === "available" ? (
+              <Button
+                variant="surface"
+                size="sm"
+                onClick={() => void onInstallUpdate()}
+              >
+                Install
+              </Button>
+            ) : (
+              <Button
+                variant="surface"
+                size="sm"
+                disabled={
+                  updateStatus.phase === "checking" ||
+                  updateStatus.phase === "installing"
+                }
+                onClick={() => void onCheckUpdates()}
+              >
+                Check
+              </Button>
+            )}
+          </div>
+
           <div className="privacy-note">
             <LockKeyhole size={15} />
             <p>
@@ -179,7 +235,7 @@ export function SettingsSheet({
         </div>
 
         <footer>
-          <span>Captura 0.0.1</span>
+          <span>Captura 0.0.2</span>
           <Button variant="ghost" size="sm" onClick={onQuit}>
             <LogOut size={14} />
             Quit Captura

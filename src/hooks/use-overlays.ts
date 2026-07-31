@@ -12,6 +12,8 @@ export function useOverlays() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+
   // The overlays behave as a z-stack; dismiss order is part of the app's
   // interaction contract: menu > preview > editor > settings > hide window.
   const dismissTop = useCallback(() => {
@@ -37,6 +39,7 @@ export function useOverlays() {
     setContextMenu,
     settingsOpen,
     setSettingsOpen,
+    openSettings,
     dismissTop,
   };
 }
