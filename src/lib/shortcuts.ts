@@ -6,6 +6,7 @@ const isMacPlatform =
 
 export const defaultShortcuts: KeyboardShortcutSettings = {
   capture: "Alt+Space",
+  captureClipboard: "Alt+Shift+Space",
   save: "Command+Enter",
   paste: "Command+Enter",
   search: "Command+F",
@@ -31,6 +32,11 @@ export const shortcutActions: {
     action: "capture",
     label: "Global capture",
     description: "Capture a selection from any app.",
+  },
+  {
+    action: "captureClipboard",
+    label: "Capture clipboard",
+    description: "Save the clipboard (text or image) from any app.",
   },
   {
     action: "save",

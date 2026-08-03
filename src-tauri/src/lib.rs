@@ -35,6 +35,7 @@ const KEEP_OPEN_SETTING: &str = "keep_open";
 #[serde(default, rename_all = "camelCase")]
 struct KeyboardShortcuts {
     capture: String,
+    capture_clipboard: String,
     save: String,
     paste: String,
     search: String,
@@ -55,6 +56,7 @@ impl Default for KeyboardShortcuts {
     fn default() -> Self {
         Self {
             capture: GLOBAL_SHORTCUT.to_string(),
+            capture_clipboard: "Alt+Shift+Space".to_string(),
             save: "Command+Enter".to_string(),
             paste: "Command+Enter".to_string(),
             search: "Command+F".to_string(),
@@ -82,6 +84,7 @@ impl KeyboardShortcuts {
     fn get(&self, action: &str) -> Option<&str> {
         match action {
             "capture" => Some(&self.capture),
+            "captureClipboard" => Some(&self.capture_clipboard),
             "save" => Some(&self.save),
             "paste" => Some(&self.paste),
             "search" => Some(&self.search),
@@ -103,6 +106,7 @@ impl KeyboardShortcuts {
     fn set(&mut self, action: &str, shortcut: String) -> Result<(), String> {
         let target = match action {
             "capture" => &mut self.capture,
+            "captureClipboard" => &mut self.capture_clipboard,
             "save" => &mut self.save,
             "paste" => &mut self.paste,
             "search" => &mut self.search,
@@ -453,17 +457,17 @@ fn set_shortcut(
         .ok_or_else(|| "Unknown shortcut action".to_string())?
         .to_string();
     if current == shortcut {
-        if action == "capture" && !state.shortcut_registered.load(Ordering::Relaxed) {
-            app.global_shortcut()
-                .register(shortcut.as_str())
-                .map_err(|error| format!("That global shortcut is unavailable: {error}"))?;
-            state.shortcut_registered.store(true, Ordering::Relaxed);
+        if is_global_action(&action) {
+            let registered = app.global_shortcut().register(shortcut.as_str());
+            if action == "capture" && registered.is_ok() {
+                state.shortcut_registered.store(true, Ordering::Relaxed);
+            }
         }
         drop(shortcuts);
         return current_app_settings(&state);
     }
 
-    if action == "capture" {
+    if is_global_action(&action) {
         app.global_shortcut()
             .register(shortcut.as_str())
             .map_err(|error| format!("That global shortcut is unavailable: {error}"))?;
@@ -477,7 +481,7 @@ fn set_shortcut(
     shortcuts.set(&action, shortcut.clone())?;
     if let Err(error) = persist_shortcuts(&state, &shortcuts) {
         *shortcuts = previous;
-        if action == "capture" {
+        if is_global_action(&action) {
             let _ = app.global_shortcut().unregister(shortcut.as_str());
             let _ = app.global_shortcut().register(current.as_str());
         }
@@ -498,22 +502,45 @@ fn reset_shortcuts(app: AppHandle, state: State<'_, AppState>) -> Result<AppSett
         .shortcuts
         .lock()
         .map_err(|_| "shortcut lock was poisoned".to_string())?;
-    let current_capture = shortcuts.capture.clone();
+    let swaps = [
+        (shortcuts.capture.clone(), defaults.capture.clone()),
+        (
+            shortcuts.capture_clipboard.clone(),
+            defaults.capture_clipboard.clone(),
+        ),
+    ];
 
-    if current_capture != defaults.capture {
-        app.global_shortcut()
-            .register(defaults.capture.as_str())
-            .map_err(|error| format!("The default global shortcut is unavailable: {error}"))?;
-        if let Err(error) = app.global_shortcut().unregister(current_capture.as_str()) {
-            let _ = app.global_shortcut().unregister(defaults.capture.as_str());
-            return Err(error.to_string());
+    let mut swapped: Vec<&(String, String)> = Vec::new();
+    for swap in &swaps {
+        let (current, default) = swap;
+        if current == default {
+            continue;
         }
+        if let Err(error) = app
+            .global_shortcut()
+            .register(default.as_str())
+            .map_err(|error| format!("The default global shortcut is unavailable: {error}"))
+            .and_then(|()| {
+                app.global_shortcut()
+                    .unregister(current.as_str())
+                    .map_err(|error| error.to_string())
+            })
+        {
+            // Roll back everything swapped so far.
+            let _ = app.global_shortcut().unregister(default.as_str());
+            for (current, default) in swapped {
+                let _ = app.global_shortcut().unregister(default.as_str());
+                let _ = app.global_shortcut().register(current.as_str());
+            }
+            return Err(error);
+        }
+        swapped.push(swap);
     }
 
     if let Err(error) = persist_shortcuts(&state, &defaults) {
-        if current_capture != defaults.capture {
-            let _ = app.global_shortcut().unregister(defaults.capture.as_str());
-            let _ = app.global_shortcut().register(current_capture.as_str());
+        for (current, default) in swapped {
+            let _ = app.global_shortcut().unregister(default.as_str());
+            let _ = app.global_shortcut().register(current.as_str());
         }
         return Err(error);
     }
@@ -536,6 +563,24 @@ fn set_keep_open(state: State<'_, AppState>, keep_open: bool) -> Result<AppSetti
 #[tauri::command]
 fn capture_clipboard_now(app: AppHandle) {
     capture_clipboard(&app);
+}
+
+fn capture_clipboard_action(app: AppHandle) {
+    capture_clipboard(&app);
+}
+
+fn matches_registered_shortcut(
+    pressed: &tauri_plugin_global_shortcut::Shortcut,
+    configured: &str,
+) -> bool {
+    configured
+        .parse::<tauri_plugin_global_shortcut::Shortcut>()
+        .map(|shortcut| shortcut == *pressed)
+        .unwrap_or(false)
+}
+
+fn is_global_action(action: &str) -> bool {
+    matches!(action, "capture" | "captureClipboard")
 }
 
 #[tauri::command]
@@ -813,9 +858,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        let handle = app.clone();
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let (capture, capture_clipboard) = {
+                        let state = app.state::<AppState>();
+                        let shortcuts = state.shortcuts.lock();
+                        match shortcuts {
+                            Ok(shortcuts) => (
+                                shortcuts.capture.clone(),
+                                shortcuts.capture_clipboard.clone(),
+                            ),
+                            Err(_) => return,
+                        }
+                    };
+                    let handle = app.clone();
+                    if matches_registered_shortcut(shortcut, &capture_clipboard) {
+                        thread::spawn(move || capture_clipboard_action(handle));
+                    } else if matches_registered_shortcut(shortcut, &capture) {
                         thread::spawn(move || handle_global_capture(handle));
                     }
                 })
@@ -852,16 +913,24 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            let shortcut = app
+            let (capture_shortcut, clipboard_shortcut) = app
                 .state::<AppState>()
                 .shortcuts
                 .lock()
-                .map(|shortcuts| shortcuts.capture.clone())
-                .unwrap_or_else(|_| GLOBAL_SHORTCUT.to_string());
-            let registered = app.global_shortcut().register(shortcut.as_str()).is_ok();
+                .map(|shortcuts| {
+                    (shortcuts.capture.clone(), shortcuts.capture_clipboard.clone())
+                })
+                .unwrap_or_else(|_| {
+                    (GLOBAL_SHORTCUT.to_string(), "Alt+Shift+Space".to_string())
+                });
+            let registered = app
+                .global_shortcut()
+                .register(capture_shortcut.as_str())
+                .is_ok();
             app.state::<AppState>()
                 .shortcut_registered
                 .store(registered, Ordering::Relaxed);
+            let _ = app.global_shortcut().register(clipboard_shortcut.as_str());
 
             // The paste target must be "the app the user was just working in",
             // not "the app that was frontmost when Captura opened" — with the

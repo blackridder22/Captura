@@ -154,7 +154,11 @@ export function SettingsSheet({
             </span>
             <div>
               <strong>Capture clipboard</strong>
-              <p>Save the current clipboard without using the tray menu.</p>
+              <p>
+                Also available anywhere via{" "}
+                {shortcutLabel(settings.shortcuts.captureClipboard)} — copy an
+                image or text, press it, captured.
+              </p>
             </div>
             <Button
               variant="surface"

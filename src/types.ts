@@ -5,6 +5,7 @@ export type SectionFilter = "all" | "unfiled" | string;
 
 export type ShortcutAction =
   | "capture"
+  | "captureClipboard"
   | "save"
   | "paste"
   | "search"
