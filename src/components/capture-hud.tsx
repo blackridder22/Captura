@@ -12,6 +12,7 @@ const previewItem: CaptureItem = {
   sourceApp: "ChatGPT",
   sourceBundleId: "com.openai.chat",
   sectionId: null,
+  attachmentPath: null,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
 };

@@ -58,6 +58,45 @@ VALUES ('capture_shortcut', 'Alt+Space');
 PRAGMA user_version = 3;
 "#;
 
+// Table rebuild: SQLite CHECK constraints cannot be altered in place, and
+// the v1 schema pinned kind to prompt/note/link.
+const MIGRATION_004: &str = r#"
+CREATE TABLE captures_v4 (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('prompt', 'note', 'link', 'image')),
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    source_app TEXT,
+    source_bundle_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    section_id TEXT REFERENCES sections(id) ON DELETE SET NULL,
+    attachment_path TEXT
+);
+
+INSERT INTO captures_v4 (
+    id, kind, content, status, source_app, source_bundle_id,
+    created_at, updated_at, section_id
+)
+SELECT id, kind, content, status, source_app, source_bundle_id,
+       created_at, updated_at, section_id
+FROM captures;
+
+DROP TABLE captures;
+ALTER TABLE captures_v4 RENAME TO captures;
+
+CREATE INDEX IF NOT EXISTS idx_captures_status_created_at
+ON captures(status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_captures_kind
+ON captures(kind);
+
+CREATE INDEX IF NOT EXISTS idx_captures_section_id
+ON captures(section_id);
+
+PRAGMA user_version = 4;
+"#;
+
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("database error: {0}")]
@@ -66,6 +105,8 @@ pub enum DatabaseError {
     NotFound,
     #[error("capture content cannot be empty")]
     EmptyContent,
+    #[error("image captures can't be merged")]
+    CannotMergeImages,
     #[error("database lock was poisoned")]
     Poisoned,
 }
@@ -76,6 +117,7 @@ pub enum ItemKind {
     Prompt,
     Note,
     Link,
+    Image,
 }
 
 impl ItemKind {
@@ -84,6 +126,7 @@ impl ItemKind {
             Self::Prompt => "prompt",
             Self::Note => "note",
             Self::Link => "link",
+            Self::Image => "image",
         }
     }
 
@@ -91,6 +134,7 @@ impl ItemKind {
         match value {
             "prompt" => Self::Prompt,
             "link" => Self::Link,
+            "image" => Self::Image,
             _ => Self::Note,
         }
     }
@@ -129,6 +173,7 @@ pub struct CaptureItem {
     pub source_app: Option<String>,
     pub source_bundle_id: Option<String>,
     pub section_id: Option<String>,
+    pub attachment_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -166,6 +211,9 @@ impl Database {
         if version < 3 {
             connection.execute_batch(MIGRATION_003)?;
         }
+        if version < 4 {
+            connection.execute_batch(MIGRATION_004)?;
+        }
 
         Ok(Self {
             connection: Mutex::new(connection),
@@ -187,7 +235,7 @@ impl Database {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, kind, content, status, source_app, source_bundle_id,
-                    section_id, created_at, updated_at
+                    section_id, attachment_path, created_at, updated_at
              FROM captures
              ORDER BY created_at DESC",
         )?;
@@ -201,7 +249,7 @@ impl Database {
         connection
             .query_row(
                 "SELECT id, kind, content, status, source_app, source_bundle_id,
-                        section_id, created_at, updated_at
+                        section_id, attachment_path, created_at, updated_at
                  FROM captures
                  WHERE id = ?1",
                 [id],
@@ -217,6 +265,7 @@ impl Database {
         kind: ItemKind,
         source_app: Option<&str>,
         source_bundle_id: Option<&str>,
+        attachment_path: Option<&str>,
     ) -> Result<CaptureItem, DatabaseError> {
         let content = content.trim();
         if content.is_empty() {
@@ -229,8 +278,8 @@ impl Database {
         connection.execute(
             "INSERT INTO captures (
                 id, kind, content, status, source_app, source_bundle_id,
-                section_id, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7)",
+                section_id, attachment_path, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?8)",
             params![
                 id,
                 kind.as_str(),
@@ -238,6 +287,7 @@ impl Database {
                 ItemStatus::Open.as_str(),
                 source_app,
                 source_bundle_id,
+                attachment_path,
                 now,
             ],
         )?;
@@ -372,6 +422,9 @@ impl Database {
         if items.is_empty() {
             return Err(DatabaseError::NotFound);
         }
+        if items.iter().any(|item| item.kind == ItemKind::Image) {
+            return Err(DatabaseError::CannotMergeImages);
+        }
 
         let content = items
             .iter()
@@ -392,8 +445,8 @@ impl Database {
         transaction.execute(
             "INSERT INTO captures (
                 id, kind, content, status, source_app, source_bundle_id,
-                section_id, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?6)",
+                section_id, attachment_path, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, NULL, ?6, ?6)",
             params![
                 id,
                 ItemKind::Note.as_str(),
@@ -445,14 +498,41 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
         source_app: row.get(4)?,
         source_bundle_id: row.get(5)?,
         section_id: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
+        attachment_path: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stores_image_items_and_refuses_to_merge_them() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let database = Database::open(&directory.path().join("captura.db")).expect("database");
+
+        let image = database
+            .create_item(
+                "Image capture",
+                ItemKind::Image,
+                Some("Preview"),
+                None,
+                Some("/tmp/example.png"),
+            )
+            .expect("create image item");
+        assert_eq!(image.kind, ItemKind::Image);
+        assert_eq!(image.attachment_path.as_deref(), Some("/tmp/example.png"));
+
+        let note = database
+            .create_item("A caption", ItemKind::Note, None, None, None)
+            .expect("create note");
+        let error = database
+            .merge_items(&[image.id.clone(), note.id.clone()])
+            .expect_err("merging images must fail");
+        assert!(matches!(error, DatabaseError::CannotMergeImages));
+    }
 
     #[test]
     fn reports_clean_integrity_on_fresh_database() {
@@ -472,6 +552,7 @@ mod tests {
                 ItemKind::Prompt,
                 Some("ChatGPT"),
                 Some("com.openai.chat"),
+                None,
             )
             .expect("create capture");
 
@@ -496,10 +577,10 @@ mod tests {
         let database = Database::open(&directory.path().join("captura.db")).expect("database");
         let section = database.create_section("Launch").expect("create section");
         let first = database
-            .create_item("First thought", ItemKind::Note, None, None)
+            .create_item("First thought", ItemKind::Note, None, None, None)
             .expect("first capture");
         let second = database
-            .create_item("Second thought", ItemKind::Prompt, None, None)
+            .create_item("Second thought", ItemKind::Prompt, None, None, None)
             .expect("second capture");
 
         let moved = database

@@ -7,8 +7,9 @@ use core_graphics::{
 };
 use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy, NSColor,
-    NSPasteboard, NSPasteboardType, NSPasteboardTypeString, NSRunningApplication,
+    NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
+    NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSPasteboard, NSPasteboardType,
+    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSRunningApplication,
     NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
     NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
 };
@@ -289,6 +290,55 @@ pub fn clipboard_text() -> Option<String> {
         .map(|value| value.to_string())
 }
 
+/// Reads a clipboard image as PNG bytes, converting TIFF (the common
+/// pasteboard flavor for screenshots and app copies) when necessary.
+pub fn clipboard_image_png() -> Option<Vec<u8>> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    if let Some(data) = pasteboard.dataForType(unsafe { NSPasteboardTypePNG }) {
+        return Some(data.to_vec());
+    }
+    let tiff = pasteboard.dataForType(unsafe { NSPasteboardTypeTIFF })?;
+    normalize_image_to_png(&tiff.to_vec())
+}
+
+/// Re-encodes any image format AppKit can decode into PNG so storage,
+/// thumbnails, and paste-back all share one format.
+pub fn normalize_image_to_png(data: &[u8]) -> Option<Vec<u8>> {
+    let ns_data = NSData::with_bytes(data);
+    let rep = NSBitmapImageRep::imageRepWithData(&ns_data)?;
+    let properties = NSDictionary::new();
+    let png = unsafe {
+        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
+    }?;
+    Some(png.to_vec())
+}
+
+fn write_clipboard_image(png: &[u8]) -> Result<(), PlatformError> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let _ = pasteboard.clearContents();
+
+    let png_type = unsafe { NSPasteboardTypePNG };
+    let tiff_type = unsafe { NSPasteboardTypeTIFF };
+    let declared = NSArray::from_slice(&[png_type, tiff_type]);
+    unsafe {
+        pasteboard.declareTypes_owner(&declared, None);
+    }
+
+    let ns_png = NSData::with_bytes(png);
+    let mut ok = pasteboard.setData_forType(Some(&ns_png), png_type);
+    // A TIFF flavor keeps paste working in apps that don't accept PNG.
+    if let Some(rep) = NSBitmapImageRep::imageRepWithData(&ns_png) {
+        if let Some(tiff) = rep.TIFFRepresentation() {
+            ok |= pasteboard.setData_forType(Some(&tiff), tiff_type);
+        }
+    }
+    if ok {
+        Ok(())
+    } else {
+        Err(PlatformError::ClipboardWrite)
+    }
+}
+
 pub fn write_clipboard_text(value: &str) -> Result<(), PlatformError> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let _ = pasteboard.clearContents();
@@ -364,11 +414,16 @@ fn selected_text_via_accessibility(application: &ActiveApplication) -> Option<St
     selection
 }
 
+pub enum CapturedSelection {
+    Text(String),
+    Image(Vec<u8>),
+}
+
 pub fn copy_selection(
     application: Option<&ActiveApplication>,
-) -> Result<Option<String>, PlatformError> {
+) -> Result<Option<CapturedSelection>, PlatformError> {
     if let Some(selection) = application.and_then(selected_text_via_accessibility) {
-        return Ok(Some(selection));
+        return Ok(Some(CapturedSelection::Text(selection)));
     }
 
     if !post_event_trusted() {
@@ -377,7 +432,7 @@ pub fn copy_selection(
 
     let snapshot = ClipboardSnapshot::capture();
     let sentinel = format!("captura-selection-{}", Uuid::new_v4());
-    let captured_text = (|| {
+    let captured = (|| {
         write_clipboard_text(&sentinel)?;
         post_command_key(KeyCode::ANSI_C)?;
 
@@ -385,21 +440,25 @@ pub fn copy_selection(
             thread::sleep(Duration::from_millis(25));
             let value = clipboard_text();
             if value.as_deref() != Some(sentinel.as_str()) {
-                return Ok(value);
+                // The source app replaced our sentinel: inspect what it put
+                // there before the snapshot below wipes it.
+                if let Some(text) = value {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        return Ok(Some(CapturedSelection::Text(trimmed.to_string())));
+                    }
+                }
+                if let Some(png) = clipboard_image_png() {
+                    return Ok(Some(CapturedSelection::Image(png)));
+                }
+                return Ok(None);
             }
         }
 
         Ok(None)
     })();
     snapshot.restore();
-    let captured_text = captured_text?;
-
-    let selection = captured_text.and_then(|value| {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    });
-
-    Ok(selection)
+    captured
 }
 
 pub fn paste_text(value: &str, target: &ActiveApplication) -> Result<(), PlatformError> {
@@ -409,7 +468,23 @@ pub fn paste_text(value: &str, target: &ActiveApplication) -> Result<(), Platfor
 
     let snapshot = ClipboardSnapshot::capture();
     write_clipboard_text(value)?;
+    deliver_paste(target, &snapshot)
+}
 
+pub fn paste_image(png: &[u8], target: &ActiveApplication) -> Result<(), PlatformError> {
+    if !post_event_trusted() {
+        return Err(PlatformError::AccessibilityPermission);
+    }
+
+    let snapshot = ClipboardSnapshot::capture();
+    write_clipboard_image(png)?;
+    deliver_paste(target, &snapshot)
+}
+
+fn deliver_paste(
+    target: &ActiveApplication,
+    snapshot: &ClipboardSnapshot,
+) -> Result<(), PlatformError> {
     // A fixed delay is not enough: coming out of an overlay panel (or into a
     // fullscreen Space) activation can take several hundred milliseconds, and
     // a ⌘V posted before the switch lands in the wrong app or nowhere.
@@ -458,6 +533,32 @@ fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ONE_PIXEL_PNG: [u8; 70] = [
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
+        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
+        80, 15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ];
+
+    #[test]
+    fn normalize_image_round_trips_png() {
+        let png = normalize_image_to_png(&ONE_PIXEL_PNG).expect("decode png");
+        assert_eq!(&png[..8], &ONE_PIXEL_PNG[..8], "PNG magic preserved");
+        assert!(normalize_image_to_png(b"not an image").is_none());
+    }
+
+    #[test]
+    fn clipboard_image_write_and_read_round_trip() {
+        // Guard the user's clipboard: snapshot before, restore after.
+        let snapshot = ClipboardSnapshot::capture();
+        let result = write_clipboard_image(&ONE_PIXEL_PNG)
+            .map(|()| clipboard_image_png());
+        snapshot.restore();
+
+        let read_back = result.expect("write image").expect("read image back");
+        assert_eq!(&read_back[..8], &ONE_PIXEL_PNG[..8], "PNG magic preserved");
+    }
 
     #[test]
     fn active_application_from_never_produces_an_empty_name() {

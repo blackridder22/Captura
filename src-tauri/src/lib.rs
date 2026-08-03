@@ -24,7 +24,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(target_os = "macos")]
-use platform::macos::{self, ActiveApplication};
+use platform::macos::{self, ActiveApplication, CapturedSelection};
 
 const APP_BUNDLE_ID: &str = "com.autoscale.captura";
 const GLOBAL_SHORTCUT: &str = "Alt+Space";
@@ -236,7 +236,7 @@ fn create_item(
 ) -> Result<CaptureItem, String> {
     state
         .database
-        .create_item(&content, kind, source_app.as_deref(), None)
+        .create_item(&content, kind, source_app.as_deref(), None, None)
         .map_err(|error| error.to_string())
 }
 
@@ -263,10 +263,51 @@ fn toggle_item(state: State<'_, AppState>, id: String) -> Result<CaptureItem, St
 
 #[tauri::command]
 fn delete_item(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let attachment = state
+        .database
+        .get_item(&id)
+        .ok()
+        .and_then(|item| item.attachment_path);
     state
         .database
         .delete_item(&id)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if let Some(path) = attachment {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn import_image_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<Vec<CaptureItem>, String> {
+    let mut imported = Vec::new();
+    for path in paths {
+        let source = PathBuf::from(&path);
+        let Ok(bytes) = std::fs::read(&source) else {
+            continue;
+        };
+        // Normalizing through AppKit both converts the format and rejects
+        // non-image files in one step.
+        let Some(png) = macos::normalize_image_to_png(&bytes) else {
+            continue;
+        };
+        let label = source
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .filter(|stem| !stem.trim().is_empty())
+            .unwrap_or_else(|| "Image".to_string());
+        let item = create_image_capture(&state, &png, &label, None, None)?;
+        let _ = app.emit("captura://captured", &item);
+        imported.push(item);
+    }
+    if imported.is_empty() {
+        return Err("No images found in the dropped files.".to_string());
+    }
+    Ok(imported)
 }
 
 #[tauri::command]
@@ -326,7 +367,17 @@ async fn paste_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
         if !state.keep_open.load(Ordering::Relaxed) {
             hide_window(&app, "main");
         }
-        macos::paste_text(&item.content, &target).map_err(|error| error.to_string())?;
+        if item.kind == ItemKind::Image {
+            let path = item
+                .attachment_path
+                .as_deref()
+                .ok_or_else(|| "This image capture has no stored file.".to_string())?;
+            let png = std::fs::read(path)
+                .map_err(|_| "The image file for this capture is missing.".to_string())?;
+            macos::paste_image(&png, &target).map_err(|error| error.to_string())?;
+        } else {
+            macos::paste_text(&item.content, &target).map_err(|error| error.to_string())?;
+        }
         state
             .database
             .set_status(&id, ItemStatus::Done)
@@ -518,18 +569,33 @@ fn handle_global_capture(app: AppHandle) {
         .and_then(|application| application.clone());
 
     match macos::copy_selection(previous.as_ref()) {
-        Ok(Some(content)) => {
+        Ok(Some(selection)) => {
             let state = app.state::<AppState>();
-            let result = state.database.create_item(
-                &content,
-                infer_kind(&content),
-                previous
-                    .as_ref()
-                    .map(|application| application.name.as_str()),
-                previous
-                    .as_ref()
-                    .and_then(|application| application.bundle_id.as_deref()),
-            );
+            let source_app = previous
+                .as_ref()
+                .map(|application| application.name.as_str());
+            let source_bundle_id = previous
+                .as_ref()
+                .and_then(|application| application.bundle_id.as_deref());
+            let result = match selection {
+                CapturedSelection::Text(content) => state
+                    .database
+                    .create_item(
+                        &content,
+                        infer_kind(&content),
+                        source_app,
+                        source_bundle_id,
+                        None,
+                    )
+                    .map_err(|error| error.to_string()),
+                CapturedSelection::Image(png) => create_image_capture(
+                    &state,
+                    &png,
+                    "Image capture",
+                    source_app,
+                    source_bundle_id,
+                ),
+            };
 
             if let Ok(item) = result {
                 let _ = app.emit("captura://captured", &item);
@@ -545,15 +611,6 @@ fn handle_global_capture(app: AppHandle) {
 }
 
 fn capture_clipboard(app: &AppHandle) {
-    let Some(content) = macos::clipboard_text() else {
-        show_main_window(app, true);
-        return;
-    };
-    if content.trim().is_empty() {
-        show_main_window(app, true);
-        return;
-    }
-
     remember_frontmost_application(app);
     let state = app.state::<AppState>();
     let previous = state
@@ -561,19 +618,79 @@ fn capture_clipboard(app: &AppHandle) {
         .lock()
         .ok()
         .and_then(|application| application.clone());
-    if let Ok(item) = state.database.create_item(
-        &content,
-        infer_kind(&content),
-        previous
-            .as_ref()
-            .map(|application| application.name.as_str()),
-        previous
-            .as_ref()
-            .and_then(|application| application.bundle_id.as_deref()),
-    ) {
+    let source_app = previous
+        .as_ref()
+        .map(|application| application.name.as_str());
+    let source_bundle_id = previous
+        .as_ref()
+        .and_then(|application| application.bundle_id.as_deref());
+
+    let result = match macos::clipboard_text().filter(|text| !text.trim().is_empty()) {
+        Some(content) => state
+            .database
+            .create_item(
+                &content,
+                infer_kind(&content),
+                source_app,
+                source_bundle_id,
+                None,
+            )
+            .map_err(|error| error.to_string()),
+        None => match macos::clipboard_image_png() {
+            Some(png) => create_image_capture(
+                &state,
+                &png,
+                "Image capture",
+                source_app,
+                source_bundle_id,
+            ),
+            None => {
+                show_main_window(app, true);
+                return;
+            }
+        },
+    };
+
+    if let Ok(item) = result {
         let _ = app.emit("captura://captured", &item);
         show_capture_hud(app, &item);
     }
+}
+
+fn attachments_dir() -> Result<PathBuf, String> {
+    let database = database_path()?;
+    let parent = database
+        .parent()
+        .ok_or_else(|| "could not resolve Captura's data directory".to_string())?;
+    let dir = parent.join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    Ok(dir)
+}
+
+fn create_image_capture(
+    state: &AppState,
+    png: &[u8],
+    label: &str,
+    source_app: Option<&str>,
+    source_bundle_id: Option<&str>,
+) -> Result<CaptureItem, String> {
+    let path = attachments_dir()?.join(format!("capture-{}.png", uuid::Uuid::new_v4()));
+    std::fs::write(&path, png).map_err(|error| error.to_string())?;
+
+    let result = state
+        .database
+        .create_item(
+            label,
+            ItemKind::Image,
+            source_app,
+            source_bundle_id,
+            Some(&path.to_string_lossy()),
+        )
+        .map_err(|error| error.to_string());
+    if result.is_err() {
+        let _ = std::fs::remove_file(&path);
+    }
+    result
 }
 
 fn show_main_window(app: &AppHandle, focus_composer: bool) {
@@ -640,24 +757,10 @@ fn position_window_at_menu_bar(window: &WebviewWindow, right_margin: i32) {
 }
 
 fn tray_icon() -> Image<'static> {
-    const SIZE: u32 = 18;
-    let mut pixels = vec![0_u8; (SIZE * SIZE * 4) as usize];
-
-    for y in 2..16 {
-        for x in 2..16 {
-            let on_outer = x == 2 || x == 3 || y == 2 || y == 3 || y == 14 || y == 15;
-            let open_edge = x >= 13 && (6..=11).contains(&y);
-            if on_outer && !open_edge {
-                let offset = ((y * SIZE + x) * 4) as usize;
-                pixels[offset] = 255;
-                pixels[offset + 1] = 255;
-                pixels[offset + 2] = 255;
-                pixels[offset + 3] = 255;
-            }
-        }
-    }
-
-    Image::new_owned(pixels, SIZE, SIZE)
+    // Retina template glyph (viewfinder brackets + capture dot), recolored
+    // automatically by macOS for light/dark menu bars.
+    Image::from_bytes(include_bytes!("../icons/tray@2x.png"))
+        .expect("tray icon asset is a valid PNG")
 }
 
 pub fn run() {
@@ -772,6 +875,7 @@ pub fn run() {
             update_item,
             toggle_item,
             delete_item,
+            import_image_files,
             list_sections,
             create_section,
             move_items_to_section,
