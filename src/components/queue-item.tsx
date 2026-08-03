@@ -5,12 +5,14 @@ import {
   Copy,
   FileText,
   Globe2,
+  Image as ImageIcon,
   Pencil,
   Sparkles,
   Trash2,
 } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { CaptureItem } from "../types";
+import { attachmentUrl } from "../lib/api";
 import { formatCaptureTime } from "../lib/items";
 import { shortcutLabel } from "../lib/shortcuts";
 import { MarkdownText } from "./markdown-text";
@@ -32,6 +34,9 @@ type QueueItemProps = {
 };
 
 function SourceIcon({ item }: { item: CaptureItem }) {
+  if (item.kind === "image") {
+    return <ImageIcon size={12} strokeWidth={1.8} />;
+  }
   if (item.sourceApp?.toLocaleLowerCase().includes("chatgpt")) {
     return <Bot size={12} strokeWidth={1.8} />;
   }
@@ -92,12 +97,30 @@ export function QueueItem({
       </button>
 
       <div className="item-copy">
-        <p data-link={item.kind === "link"}>
-          <MarkdownText content={item.content} compact />
-        </p>
+        {item.kind === "image" && item.attachmentPath ? (
+          <figure className="item-thumb">
+            <img
+              src={attachmentUrl(item.attachmentPath)}
+              alt={item.content}
+              loading="lazy"
+              draggable={false}
+            />
+          </figure>
+        ) : (
+          <p data-link={item.kind === "link"}>
+            <MarkdownText content={item.content} compact />
+          </p>
+        )}
         <div className="item-meta">
           <SourceIcon item={item} />
-          <span>{item.sourceApp ?? (item.kind === "note" ? "Note" : "Prompt")}</span>
+          <span>
+            {item.sourceApp ??
+              (item.kind === "note"
+                ? "Note"
+                : item.kind === "image"
+                  ? "Image"
+                  : "Prompt")}
+          </span>
           {sectionName ? (
             <>
               <i />

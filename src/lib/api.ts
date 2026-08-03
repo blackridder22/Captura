@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
@@ -24,6 +24,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
+    attachmentPath: null,
     createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
   },
@@ -35,6 +36,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "Chrome",
     sourceBundleId: "com.google.Chrome",
     sectionId: null,
+    attachmentPath: null,
     createdAt: new Date(Date.now() - 11 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
   },
@@ -47,6 +49,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
+    attachmentPath: null,
     createdAt: new Date(Date.now() - 16 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 16 * 60_000).toISOString(),
   },
@@ -58,6 +61,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: null,
     sourceBundleId: null,
     sectionId: null,
+    attachmentPath: null,
     createdAt: new Date(Date.now() - 25 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
   },
@@ -69,6 +73,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
+    attachmentPath: null,
     createdAt: new Date(Date.now() - 36 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 36 * 60_000).toISOString(),
   },
@@ -123,6 +128,7 @@ export async function createItem(input: CreateItemInput) {
     sourceApp: input.sourceApp ?? null,
     sourceBundleId: null,
     sectionId: null,
+    attachmentPath: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -244,6 +250,7 @@ export async function mergeItems(ids: string[]) {
     sourceApp: null,
     sourceBundleId: null,
     sectionId,
+    attachmentPath: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -252,6 +259,21 @@ export async function mergeItems(ids: string[]) {
     ...readDemoItems().filter((item) => !ids.includes(item.id)),
   ]);
   return merged;
+}
+
+export async function importImageFiles(paths: string[]) {
+  if (isTauriRuntime()) {
+    return invoke<CaptureItem[]>("import_image_files", { paths });
+  }
+  return [];
+}
+
+/// Resolves an attachment's on-disk path to a URL the WebView may load.
+export function attachmentUrl(path: string) {
+  if (isTauriRuntime()) {
+    return convertFileSrc(path);
+  }
+  return path;
 }
 
 export async function pasteItem(id: string) {

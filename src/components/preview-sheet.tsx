@@ -1,5 +1,6 @@
 import { Pencil, X } from "lucide-react";
 import type { CaptureItem } from "../types";
+import { attachmentUrl } from "../lib/api";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
 
@@ -33,7 +34,16 @@ export function PreviewSheet({ items, onClose, onEdit }: PreviewSheetProps) {
         <div className="preview-content">
           {items.map((item) => (
             <article key={item.id}>
-              <MarkdownText content={item.content} />
+              {item.kind === "image" && item.attachmentPath ? (
+                <img
+                  className="preview-image"
+                  src={attachmentUrl(item.attachmentPath)}
+                  alt={item.content}
+                  draggable={false}
+                />
+              ) : (
+                <MarkdownText content={item.content} />
+              )}
             </article>
           ))}
         </div>

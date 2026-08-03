@@ -61,19 +61,26 @@ export function EditSheet({ item, onClose, onSave }: EditSheetProps) {
         />
 
         <footer>
-          <div className="sheet-kind-switcher">
-            {kinds.map(({ value, label, icon: Icon }) => (
-              <button
-                type="button"
-                key={value}
-                data-active={kind === value}
-                onClick={() => setKind(value)}
-              >
-                <Icon size={13} />
-                {label}
-              </button>
-            ))}
-          </div>
+          {item.kind === "image" ? (
+            // Images stay images; the text field edits the caption.
+            <div className="sheet-kind-switcher" data-static="true">
+              <span>Image caption</span>
+            </div>
+          ) : (
+            <div className="sheet-kind-switcher">
+              {kinds.map(({ value, label, icon: Icon }) => (
+                <button
+                  type="button"
+                  key={value}
+                  data-active={kind === value}
+                  onClick={() => setKind(value)}
+                >
+                  <Icon size={13} />
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <Button
             type="submit"
             variant="accent"

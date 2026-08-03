@@ -1,4 +1,4 @@
-export type ItemKind = "prompt" | "note" | "link";
+export type ItemKind = "prompt" | "note" | "link" | "image";
 export type ItemStatus = "open" | "done";
 export type QueueFilter = "inbox" | "prompts" | "notes" | "done";
 export type SectionFilter = "all" | "unfiled" | string;
@@ -35,6 +35,7 @@ export type CaptureItem = {
   sourceApp: string | null;
   sourceBundleId: string | null;
   sectionId: string | null;
+  attachmentPath: string | null;
   createdAt: string;
   updatedAt: string;
 };

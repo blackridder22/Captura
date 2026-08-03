@@ -5,6 +5,7 @@ import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
 import { useBulkActions } from "./hooks/use-bulk-actions";
 import { useComposer } from "./hooks/use-composer";
+import { useFileDrop } from "./hooks/use-file-drop";
 import { useItemActions } from "./hooks/use-item-actions";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { useNotify } from "./hooks/use-notify";
@@ -93,6 +94,7 @@ export default function App() {
     checkForUpdates,
     installUpdate,
   } = useUpdater({ notify });
+  const { dropping } = useFileDrop({ notify });
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -187,6 +189,7 @@ export default function App() {
   return (
     <main
       className="app-frame"
+      data-dropping={dropping}
       onMouseDown={() => contextMenu && setContextMenu(null)}
     >
       <section className="captura-panel" aria-label="Captura queue">
@@ -378,6 +381,12 @@ export default function App() {
           onCheckUpdates={() => checkForUpdates(false)}
           onInstallUpdate={installUpdate}
         />
+      ) : null}
+
+      {dropping ? (
+        <div className="drop-overlay" aria-hidden="true">
+          <span>Drop images to capture</span>
+        </div>
       ) : null}
 
       {toast ? (
