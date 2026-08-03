@@ -282,6 +282,10 @@ pub fn activate_application(application: &ActiveApplication) -> bool {
         .unwrap_or(false)
 }
 
+pub fn pasteboard_change_count() -> isize {
+    NSPasteboard::generalPasteboard().changeCount()
+}
+
 pub fn clipboard_text() -> Option<String> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let string_type = unsafe { NSPasteboardTypeString };

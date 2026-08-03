@@ -6,7 +6,7 @@ mod smoke;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicIsize, Ordering},
         Mutex,
     },
     thread,
@@ -136,6 +136,7 @@ struct AppState {
     previous_application: Mutex<Option<ActiveApplication>>,
     shortcuts: Mutex<KeyboardShortcuts>,
     shortcut_registered: AtomicBool,
+    pasteboard_change_seen: AtomicIsize,
     main_window_has_focused: AtomicBool,
     keep_open: AtomicBool,
 }
@@ -168,6 +169,7 @@ impl AppState {
             previous_application: Mutex::new(None),
             shortcuts: Mutex::new(shortcuts),
             shortcut_registered: AtomicBool::new(false),
+            pasteboard_change_seen: AtomicIsize::new(0),
             main_window_has_focused: AtomicBool::new(false),
             keep_open: AtomicBool::new(keep_open),
         })
@@ -568,6 +570,16 @@ fn handle_global_capture(app: AppHandle) {
         .ok()
         .and_then(|application| application.clone());
 
+    // Screenshot workflow: the user copies an image (⌃⇧⌘4 etc.) and hits the
+    // shortcut with nothing selected. The selection dance below can't see
+    // that, so note whether the clipboard changed since we last looked —
+    // a fresh image with no selection IS the capture.
+    let clipboard_is_fresh = macos::pasteboard_change_count()
+        != app
+            .state::<AppState>()
+            .pasteboard_change_seen
+            .load(Ordering::Relaxed);
+
     match macos::copy_selection(previous.as_ref()) {
         Ok(Some(selection)) => {
             let state = app.state::<AppState>();
@@ -602,12 +614,41 @@ fn handle_global_capture(app: AppHandle) {
                 show_capture_hud(&app, &item);
             }
         }
-        Ok(None) => show_main_window(&app, true),
+        Ok(None) => {
+            let fresh_image = clipboard_is_fresh
+                .then(macos::clipboard_image_png)
+                .flatten();
+            match fresh_image {
+                Some(png) => {
+                    let state = app.state::<AppState>();
+                    let result = create_image_capture(
+                        &state,
+                        &png,
+                        "Image capture",
+                        previous.as_ref().map(|application| application.name.as_str()),
+                        previous
+                            .as_ref()
+                            .and_then(|application| application.bundle_id.as_deref()),
+                    );
+                    if let Ok(item) = result {
+                        let _ = app.emit("captura://captured", &item);
+                        show_capture_hud(&app, &item);
+                    }
+                }
+                None => show_main_window(&app, true),
+            }
+        }
         Err(_) => {
             show_main_window(&app, true);
             let _ = app.emit("captura://permission-needed", ());
         }
     }
+
+    // Whatever happened, the current clipboard state is now "seen" — the
+    // same image won't re-capture on the next empty-selection shortcut.
+    app.state::<AppState>()
+        .pasteboard_change_seen
+        .store(macos::pasteboard_change_count(), Ordering::Relaxed);
 }
 
 fn capture_clipboard(app: &AppHandle) {
@@ -829,6 +870,11 @@ pub fn run() {
             // activation notification only fires on the NEXT switch, so seed
             // the current frontmost app first.
             remember_frontmost_application(app.handle());
+            // Whatever is on the clipboard at launch predates Captura — mark
+            // it seen so it never auto-captures.
+            app.state::<AppState>()
+                .pasteboard_change_seen
+                .store(macos::pasteboard_change_count(), Ordering::Relaxed);
             let handle = app.handle().clone();
             match objc2::MainThreadMarker::new() {
                 Some(main_thread) => {
