@@ -757,24 +757,10 @@ fn position_window_at_menu_bar(window: &WebviewWindow, right_margin: i32) {
 }
 
 fn tray_icon() -> Image<'static> {
-    const SIZE: u32 = 18;
-    let mut pixels = vec![0_u8; (SIZE * SIZE * 4) as usize];
-
-    for y in 2..16 {
-        for x in 2..16 {
-            let on_outer = x == 2 || x == 3 || y == 2 || y == 3 || y == 14 || y == 15;
-            let open_edge = x >= 13 && (6..=11).contains(&y);
-            if on_outer && !open_edge {
-                let offset = ((y * SIZE + x) * 4) as usize;
-                pixels[offset] = 255;
-                pixels[offset + 1] = 255;
-                pixels[offset + 2] = 255;
-                pixels[offset + 3] = 255;
-            }
-        }
-    }
-
-    Image::new_owned(pixels, SIZE, SIZE)
+    // Retina template glyph (viewfinder brackets + capture dot), recolored
+    // automatically by macOS for light/dark menu bars.
+    Image::from_bytes(include_bytes!("../icons/tray@2x.png"))
+        .expect("tray icon asset is a valid PNG")
 }
 
 pub fn run() {
