@@ -17,6 +17,7 @@ import { useSelection } from "./hooks/use-selection";
 import { useSettingsActions } from "./hooks/use-settings-actions";
 import { useUpdater } from "./hooks/use-updater";
 import { EditSheet } from "./components/edit-sheet";
+import { PermissionBanner } from "./components/permission-banner";
 import { FilterTabs } from "./components/filter-tabs";
 import { PreviewSheet } from "./components/preview-sheet";
 import { QuickCapture } from "./components/quick-capture";
@@ -87,7 +88,8 @@ export default function App() {
     openSettings,
     dismissTop,
   } = useOverlays();
-  const { permissions, refreshPermissions } = usePermissions(settingsOpen);
+  const { permissions, refreshPermissions, showOnboarding, dismissOnboarding } =
+    usePermissions(settingsOpen);
   const { announcement, toast, announce, notify } = useNotify();
   const {
     status: updateStatus,
@@ -202,6 +204,13 @@ export default function App() {
           searchShortcut={appSettings.shortcuts.search}
           closeShortcut={appSettings.shortcuts.close}
         />
+
+        {showOnboarding ? (
+          <PermissionBanner
+            onAllow={() => void requestAccessibilityAndRefresh()}
+            onDismiss={dismissOnboarding}
+          />
+        ) : null}
 
         <QuickCapture
           content={composer}

@@ -1,6 +1,6 @@
 [package]
 name = "captura"
-version = "0.0.2"
+version = "0.0.3"
 description = "A fast, local-first macOS capture and prompt queue."
 authors = ["Auto Scale Agency"]
 edition = "2021"

@@ -235,7 +235,7 @@ export function SettingsSheet({
         </div>
 
         <footer>
-          <span>Captura 0.0.2</span>
+          <span>Captura 0.0.3</span>
           <Button variant="ghost" size="sm" onClick={onQuit}>
             <LogOut size={14} />
             Quit Captura
