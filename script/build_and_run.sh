@@ -12,14 +12,6 @@ APP_BINARY="$APP_BUNDLE/Contents/MacOS/$PROCESS_NAME"
 
 pkill -x "$PROCESS_NAME" >/dev/null 2>&1 || true
 
-# The signing keychain locks on reboot; unlock it silently when the local
-# password file exists (dev machines only — CI signs ad-hoc).
-KEYCHAIN_PASS_FILE="$HOME/.tauri/captura-keychain-pass"
-if [[ -f "$KEYCHAIN_PASS_FILE" ]]; then
-  security unlock-keychain -p "$(cat "$KEYCHAIN_PASS_FILE")" captura-signing.keychain \
-    >/dev/null 2>&1 || true
-fi
-
 cd "$ROOT_DIR"
 if [[ "${CAPTURA_SKIP_BUILD:-0}" != "1" ]]; then
   pnpm tauri build --bundles app
