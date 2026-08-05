@@ -1390,8 +1390,10 @@ kbd {
 }
 
 .edit-sheet textarea {
+  display: block;
   width: 100%;
-  min-height: 148px;
+  height: 160px;
+  min-height: 160px;
   margin-top: 14px;
   padding: 11px;
   resize: none;
@@ -1410,10 +1412,11 @@ kbd {
 }
 
 .edit-mode-switcher {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(76px, 1fr));
+  width: max-content;
   gap: 3px;
-  margin-top: 10px;
+  margin: 10px auto 0;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -1434,6 +1437,10 @@ kbd {
   font-size: 9px;
   font-weight: 680;
   cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .edit-mode-switcher button[data-active="true"] {
@@ -1449,8 +1456,9 @@ kbd {
 
 .edit-rendered-surface {
   width: 100%;
-  min-height: 148px;
-  max-height: 252px;
+  height: 160px;
+  min-height: 160px;
+  max-height: 160px;
   padding: 11px;
   overflow-y: auto;
   border: 1px solid var(--line);
