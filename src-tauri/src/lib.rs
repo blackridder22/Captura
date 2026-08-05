@@ -476,7 +476,7 @@ fn copy_items(
             format,
             count,
         } => {
-            macos::write_clipboard_text(&content).map_err(|error| error.to_string())?;
+            macos::write_clipboard_markdown(&content).map_err(|error| error.to_string())?;
             Ok(CopyResult { format, count })
         }
         CopyPayload::Image { path } => {
@@ -604,7 +604,7 @@ async fn paste_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
         }
         match payload {
             ReadyPastePayload::Text(content) => {
-                macos::paste_text(&content, &target).map_err(|error| error.to_string())?;
+                macos::paste_markdown(&content, &target).map_err(|error| error.to_string())?;
             }
             ReadyPastePayload::Image(png) => {
                 macos::paste_image(&png, &target).map_err(|error| error.to_string())?;

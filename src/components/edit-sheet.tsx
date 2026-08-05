@@ -1,6 +1,7 @@
-import { FileText, Link2, Sparkles, X } from "lucide-react";
+import { Code2, Eye, FileText, Link2, Sparkles, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { CaptureItem, ItemKind } from "../types";
+import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
 
 type EditSheetProps = {
@@ -18,11 +19,13 @@ const kinds = [
 export function EditSheet({ item, onClose, onSave }: EditSheetProps) {
   const [content, setContent] = useState(item.content);
   const [kind, setKind] = useState<ItemKind>(item.kind);
+  const [mode, setMode] = useState<"preview" | "source">("preview");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setContent(item.content);
     setKind(item.kind);
+    setMode("preview");
   }, [item]);
 
   return (
@@ -34,8 +37,11 @@ export function EditSheet({ item, onClose, onSave }: EditSheetProps) {
           event.preventDefault();
           if (!content.trim()) return;
           setSaving(true);
-          await onSave(content, kind);
-          setSaving(false);
+          try {
+            await onSave(content, kind);
+          } finally {
+            setSaving(false);
+          }
         }}
       >
         <header>
@@ -53,12 +59,62 @@ export function EditSheet({ item, onClose, onSave }: EditSheetProps) {
           </Button>
         </header>
 
-        <textarea
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          autoFocus
-          rows={7}
-        />
+        {item.kind === "image" ? (
+          <textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            aria-label="Image caption"
+            autoFocus
+            rows={7}
+          />
+        ) : (
+          <>
+            <div
+              className="edit-mode-switcher"
+              role="tablist"
+              aria-label="Edit mode"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "preview"}
+                data-active={mode === "preview"}
+                onClick={() => setMode("preview")}
+              >
+                <Eye size={12} />
+                Preview
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "source"}
+                data-active={mode === "source"}
+                onClick={() => setMode("source")}
+              >
+                <Code2 size={12} />
+                Source
+              </button>
+            </div>
+            {mode === "preview" ? (
+              <div
+                className="edit-rendered-surface"
+                role="tabpanel"
+                aria-label="Rendered Markdown preview"
+                tabIndex={0}
+              >
+                <MarkdownText content={content} />
+              </div>
+            ) : (
+              <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                aria-label="Markdown source"
+                autoFocus
+                rows={7}
+              />
+            )}
+          </>
+        )}
 
         <footer>
           {item.kind === "image" ? (
@@ -93,4 +149,3 @@ export function EditSheet({ item, onClose, onSave }: EditSheetProps) {
     </div>
   );
 }
-

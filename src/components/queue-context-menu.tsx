@@ -96,7 +96,7 @@ export function QueueContextMenu({
       {single ? (
         <button role="menuitem" onClick={onPaste}>
           <ClipboardCopy size={14} />
-          {single.kind === "image" ? "Paste Image" : "Paste Markdown"}
+          {single.kind === "image" ? "Paste Image" : "Paste formatted"}
           <Kbd>{shortcutLabel(shortcuts.paste)}</Kbd>
         </button>
       ) : null}

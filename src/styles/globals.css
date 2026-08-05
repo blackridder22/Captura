@@ -743,7 +743,7 @@ kbd {
   box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.28);
 }
 
-.queue-item[data-done="true"] .item-copy p {
+.queue-item[data-done="true"] .markdown-compact {
   color: #777572;
   text-decoration: line-through;
   text-decoration-color: rgba(119, 117, 114, 0.5);
@@ -845,29 +845,90 @@ kbd {
   gap: 6px;
 }
 
-.item-copy p {
-  display: -webkit-box;
-  margin: 0;
+.item-markdown {
+  max-height: 38px;
+  min-width: 0;
   overflow: hidden;
+}
+
+.markdown-compact {
   color: var(--text);
   font-size: 13px;
   font-weight: 590;
   letter-spacing: -0.006em;
   line-height: 1.35;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
-.item-copy p[data-link="true"] {
+.markdown-compact > :first-child {
+  margin-top: 0;
+}
+
+.markdown-compact p,
+.markdown-compact h1,
+.markdown-compact h2,
+.markdown-compact h3,
+.markdown-compact h4,
+.markdown-compact h5,
+.markdown-compact h6,
+.markdown-compact blockquote,
+.markdown-compact ul,
+.markdown-compact ol,
+.markdown-compact pre,
+.markdown-compact table {
+  margin: 0;
+}
+
+.markdown-compact h1,
+.markdown-compact h2,
+.markdown-compact h3,
+.markdown-compact h4,
+.markdown-compact h5,
+.markdown-compact h6 {
+  color: var(--text);
+  font-weight: 790;
+  line-height: 1.25;
+}
+
+.markdown-compact h1 {
+  font-size: 15px;
+}
+
+.markdown-compact h2 {
+  font-size: 14px;
+}
+
+.markdown-compact h3,
+.markdown-compact h4,
+.markdown-compact h5,
+.markdown-compact h6 {
+  font-size: 13px;
+}
+
+.markdown-compact ul,
+.markdown-compact ol {
+  padding-left: 16px;
+}
+
+.markdown-compact li::marker {
+  color: var(--accent);
+}
+
+.markdown-compact blockquote {
+  padding-left: 7px;
+  border-left: 2px solid rgba(240, 139, 100, 0.42);
+  color: var(--muted);
+}
+
+.item-markdown[data-link="true"] {
   color: var(--accent-strong);
 }
 
-.item-copy p strong {
+.markdown-compact strong {
   font-weight: 790;
 }
 
-.item-copy p code {
+.markdown-compact code {
   padding: 1px 3px;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.065);
@@ -876,7 +937,7 @@ kbd {
   font-size: 0.9em;
 }
 
-.item-copy p a {
+.markdown-compact a {
   color: var(--accent-strong);
   text-decoration: none;
 }
@@ -1346,6 +1407,65 @@ kbd {
 
 .edit-sheet textarea:focus {
   border-color: rgba(240, 139, 100, 0.46);
+}
+
+.edit-mode-switcher {
+  display: flex;
+  justify-content: flex-end;
+  gap: 3px;
+  margin-top: 10px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.edit-mode-switcher button {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #777774;
+  font-size: 9px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.edit-mode-switcher button[data-active="true"] {
+  background: rgba(240, 139, 100, 0.11);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.22);
+}
+
+.edit-mode-switcher + textarea,
+.edit-rendered-surface {
+  margin-top: 8px;
+}
+
+.edit-rendered-surface {
+  width: 100%;
+  min-height: 148px;
+  max-height: 252px;
+  padding: 11px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  outline: none;
+  background: rgba(6, 7, 8, 0.45);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.28);
+}
+
+.edit-rendered-surface:focus-visible {
+  border-color: rgba(240, 139, 100, 0.46);
+}
+
+.edit-rendered-surface .markdown-content {
+  font-size: 13px;
 }
 
 .edit-sheet footer {
@@ -1820,6 +1940,31 @@ kbd {
 .markdown-content strong {
   color: var(--text);
   font-weight: 790;
+}
+
+.markdown-content table {
+  width: 100%;
+  margin-top: 9px;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.markdown-content th {
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font-weight: 740;
+}
+
+.markdown-content input[type="checkbox"] {
+  margin: 0 5px 0 -17px;
+  accent-color: var(--accent);
 }
 
 .markdown-list-item {

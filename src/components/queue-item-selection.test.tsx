@@ -58,6 +58,8 @@ describe("QueueItem Shift selection", () => {
     });
 
     const row = container.querySelector("article")!;
+    expect(row.querySelector("h1")?.textContent).toBe("Markdown heading");
+    expect(row.textContent).not.toContain("# Markdown heading");
     const mouseDown = new MouseEvent("mousedown", {
       bubbles: true,
       cancelable: true,

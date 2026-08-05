@@ -17,6 +17,7 @@ use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 use objc2_foundation::{
     NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString, NSURL,
 };
+use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use tauri::WebviewWindow;
 use thiserror::Error;
 use uuid::Uuid;
@@ -401,6 +402,98 @@ pub fn write_clipboard_text(value: &str) -> Result<(), PlatformError> {
     }
 }
 
+fn safe_markdown_destination(destination: &str) -> bool {
+    let normalized = destination
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>();
+    normalized.starts_with('#')
+        || normalized.starts_with('/')
+        || normalized.starts_with("./")
+        || normalized.starts_with("../")
+        || normalized
+            .split_once(':')
+            .map(|(scheme, _)| {
+                matches!(
+                    scheme.to_ascii_lowercase().as_str(),
+                    "http" | "https" | "mailto"
+                )
+            })
+            .unwrap_or(true)
+}
+
+fn safe_destination<'a>(destination: CowStr<'a>) -> CowStr<'a> {
+    if safe_markdown_destination(&destination) {
+        destination
+    } else {
+        CowStr::Borrowed("")
+    }
+}
+
+/// Produces the rich clipboard flavor for a Markdown capture. Raw HTML is
+/// intentionally discarded, and unsafe link/image schemes are blanked before
+/// the CommonMark event stream becomes HTML.
+fn markdown_to_safe_html(markdown: &str) -> String {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES;
+    let events = Parser::new_ext(markdown, options).filter_map(|event| match event {
+        Event::Html(_) | Event::InlineHtml(_) => None,
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Link {
+            link_type,
+            dest_url: safe_destination(dest_url),
+            title,
+            id,
+        })),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Image {
+            link_type,
+            dest_url: safe_destination(dest_url),
+            title,
+            id,
+        })),
+        event => Some(event),
+    });
+    let mut rendered = String::new();
+    html::push_html(&mut rendered, events);
+    rendered
+}
+
+/// Writes both clipboard representations: rich HTML for Notes, Mail, and
+/// other formatted editors, plus the exact Markdown source for terminals and
+/// plain-text editors. Consumers choose the richest format they understand.
+pub fn write_clipboard_markdown(markdown: &str) -> Result<(), PlatformError> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let _ = pasteboard.clearContents();
+    let html_type = unsafe { NSPasteboardTypeHTML };
+    let string_type = unsafe { NSPasteboardTypeString };
+    let declared = NSArray::from_slice(&[html_type, string_type]);
+    unsafe {
+        pasteboard.declareTypes_owner(&declared, None);
+    }
+
+    let rich = NSString::from_str(&markdown_to_safe_html(markdown));
+    let source = NSString::from_str(markdown);
+    if pasteboard.setString_forType(&rich, html_type)
+        && pasteboard.setString_forType(&source, string_type)
+    {
+        Ok(())
+    } else {
+        Err(PlatformError::ClipboardWrite)
+    }
+}
+
 fn copy_accessibility_attribute(
     element: AXUIElementRef,
     attribute: &NSString,
@@ -503,13 +596,13 @@ pub fn copy_selection(
     captured
 }
 
-pub fn paste_text(value: &str, target: &ActiveApplication) -> Result<(), PlatformError> {
+pub fn paste_markdown(value: &str, target: &ActiveApplication) -> Result<(), PlatformError> {
     if !post_event_trusted() {
         return Err(PlatformError::AccessibilityPermission);
     }
 
     let snapshot = ClipboardSnapshot::capture();
-    write_clipboard_text(value)?;
+    write_clipboard_markdown(value)?;
     deliver_paste(target, &snapshot)
 }
 
@@ -617,6 +710,35 @@ mod tests {
         snapshot.restore();
 
         assert_eq!(result.expect("write text").as_deref(), Some(markdown));
+    }
+
+    #[test]
+    fn markdown_renderer_produces_structured_safe_html() {
+        let markdown = "# Heading\n\n- first\n- **second**\n\n[Safe](https://example.com) [Unsafe](javascript:alert(1))\n\n<script>alert('no')</script>";
+        let rendered = markdown_to_safe_html(markdown);
+
+        assert!(rendered.contains("<h1>Heading</h1>"));
+        assert!(rendered.contains("<ul>"));
+        assert!(rendered.contains("<strong>second</strong>"));
+        assert!(rendered.contains("href=\"https://example.com\""));
+        assert!(!rendered.contains("javascript:"));
+        assert!(!rendered.contains("<script"));
+    }
+
+    #[test]
+    fn clipboard_markdown_exposes_rich_html_and_exact_source() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let markdown = "# Heading\n\n1. First\n2. Second\n\n`code`";
+        let result =
+            write_clipboard_markdown(markdown).map(|()| (clipboard_html(), clipboard_text()));
+        snapshot.restore();
+
+        let (html, source) = result.expect("write dual-format Markdown");
+        let html = html.expect("HTML pasteboard flavor");
+        assert!(html.contains("<h1>Heading</h1>"));
+        assert!(html.contains("<ol>"));
+        assert_eq!(source.as_deref(), Some(markdown));
     }
 
     #[test]

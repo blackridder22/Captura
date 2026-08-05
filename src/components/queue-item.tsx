@@ -108,9 +108,9 @@ export function QueueItem({
             />
           </figure>
         ) : (
-          <p data-link={item.kind === "link"}>
+          <div className="item-markdown" data-link={item.kind === "link"}>
             <MarkdownText content={item.content} compact />
-          </p>
+          </div>
         )}
         <div className="item-meta">
           <SourceIcon item={item} />
@@ -164,7 +164,7 @@ export function QueueItem({
             className="paste-button"
             onClick={onPaste}
           >
-            {item.kind === "image" ? "Paste Image" : "Paste Markdown"}
+            {item.kind === "image" ? "Paste Image" : "Paste formatted"}
             <kbd>{shortcutLabel(pasteShortcut)}</kbd>
           </Button>
         </div>
