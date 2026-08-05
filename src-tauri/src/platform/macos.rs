@@ -15,7 +15,7 @@ use objc2_app_kit::{
 };
 use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 use objc2_foundation::{
-    NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString,
+    NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString, NSURL,
 };
 use tauri::WebviewWindow;
 use thiserror::Error;
@@ -69,6 +69,8 @@ pub enum PlatformError {
     ClipboardWrite,
     #[error("could not bring {0} forward to paste — click into it once and try again")]
     PasteTarget(String),
+    #[error("could not open macOS Accessibility settings")]
+    SystemSettings,
 }
 
 type PasteboardEntry = (Retained<NSPasteboardType>, Option<Retained<NSData>>);
@@ -219,6 +221,22 @@ pub fn request_accessibility() -> bool {
     accessibility && post_events
 }
 
+pub fn open_accessibility_settings() -> Result<(), PlatformError> {
+    let destination = NSString::from_str(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    );
+    let url = NSURL::URLWithString(&destination).ok_or(PlatformError::SystemSettings)?;
+    if NSWorkspace::sharedWorkspace().openURL(&url) {
+        Ok(())
+    } else {
+        // Fall back to the system prompt if the deep link is unavailable on
+        // this macOS version. The return value reports current trust, not
+        // whether the prompt was displayed, so it is intentionally ignored.
+        let _ = request_accessibility();
+        Ok(())
+    }
+}
+
 fn active_application_from(application: &NSRunningApplication) -> ActiveApplication {
     ActiveApplication {
         pid: application.processIdentifier(),
@@ -311,13 +329,12 @@ pub fn normalize_image_to_png(data: &[u8]) -> Option<Vec<u8>> {
     let ns_data = NSData::with_bytes(data);
     let rep = NSBitmapImageRep::imageRepWithData(&ns_data)?;
     let properties = NSDictionary::new();
-    let png = unsafe {
-        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
-    }?;
+    let png =
+        unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties) }?;
     Some(png.to_vec())
 }
 
-fn write_clipboard_image(png: &[u8]) -> Result<(), PlatformError> {
+pub fn write_clipboard_image(png: &[u8]) -> Result<(), PlatformError> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let _ = pasteboard.clearContents();
 
@@ -537,16 +554,19 @@ fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static APP_KIT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     const ONE_PIXEL_PNG: [u8; 70] = [
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
-        80, 15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
-        130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192, 80,
+        15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
 
     #[test]
     fn normalize_image_round_trips_png() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         let png = normalize_image_to_png(&ONE_PIXEL_PNG).expect("decode png");
         assert_eq!(&png[..8], &ONE_PIXEL_PNG[..8], "PNG magic preserved");
         assert!(normalize_image_to_png(b"not an image").is_none());
@@ -554,10 +574,10 @@ mod tests {
 
     #[test]
     fn clipboard_image_write_and_read_round_trip() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         // Guard the user's clipboard: snapshot before, restore after.
         let snapshot = ClipboardSnapshot::capture();
-        let result = write_clipboard_image(&ONE_PIXEL_PNG)
-            .map(|()| clipboard_image_png());
+        let result = write_clipboard_image(&ONE_PIXEL_PNG).map(|()| clipboard_image_png());
         snapshot.restore();
 
         let read_back = result.expect("write image").expect("read image back");
@@ -565,7 +585,19 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_text_write_preserves_markdown_exactly() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let markdown = "# Heading\n\n- nested\n  - child\n\n```ts\nconst x = 1;\n```";
+        let result = write_clipboard_text(markdown).map(|()| clipboard_text());
+        snapshot.restore();
+
+        assert_eq!(result.expect("write text").as_deref(), Some(markdown));
+    }
+
+    #[test]
     fn active_application_from_never_produces_an_empty_name() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         // In a bare test harness currentApplication() is a placeholder with
         // no localized name, which exercises the "Previous app" fallback.
         let current = NSRunningApplication::currentApplication();

@@ -1,6 +1,13 @@
 import { useCallback } from "react";
-import { deleteItem, mergeItems, moveItemsToSection, toggleItem } from "../lib/api";
-import type { CaptureItem } from "../types";
+import {
+  copyItems,
+  deleteItem,
+  mergeItems,
+  moveItemsToSection,
+  toggleItem,
+} from "../lib/api";
+import type { CaptureItem, ContextMenu } from "../types";
+import type { ToastTone } from "./use-notify";
 
 /// Selection-wide actions. Stateless; every bulk action closes the context
 /// menu because they are its menu entries.
@@ -12,9 +19,18 @@ type BulkActionDeps = {
   selectedItems: CaptureItem[];
   setSingle: (id: string) => void;
   clearSelection: () => void;
-  setContextMenu: (menu: { x: number; y: number } | null) => void;
+  setContextMenu: (menu: ContextMenu | null) => void;
   announce: (text: string) => void;
+  notify: (text: string, tone?: ToastTone) => void;
 };
+
+function copyErrorMessage(error: unknown) {
+  return typeof error === "string"
+    ? error
+    : error instanceof Error
+      ? error.message
+      : "Could not copy this capture.";
+}
 
 export function useBulkActions({
   removeItems,
@@ -26,6 +42,7 @@ export function useBulkActions({
   clearSelection,
   setContextMenu,
   announce,
+  notify,
 }: BulkActionDeps) {
   const handleDeleteSelected = useCallback(async () => {
     const ids = [...selectedIds];
@@ -39,16 +56,41 @@ export function useBulkActions({
   const copySelected = useCallback(
     async (asList: boolean) => {
       if (!selectedItems.length) return;
-      const content = asList
-        ? selectedItems
-            .map((item) => `- ${item.content.trim().replace(/\n+/g, " ")}`)
-            .join("\n")
-        : selectedItems.map((item) => item.content).join("\n\n");
-      await navigator.clipboard.writeText(content);
-      setContextMenu(null);
-      announce(asList ? "Copied as list" : "Copied");
+      const mode = asList
+        ? "markdownList"
+        : selectedItems.length === 1 && selectedItems[0]?.kind === "image"
+          ? "native"
+          : "sourceMarkdown";
+      try {
+        const result = await copyItems(
+          selectedItems.map((item) => item.id),
+          mode,
+        );
+        setContextMenu(null);
+        notify(
+          result.format === "image"
+            ? "Image copied"
+            : result.format === "markdownList"
+              ? "Copied as Markdown list"
+              : "Copied as Markdown",
+        );
+      } catch (error) {
+        notify(copyErrorMessage(error), "error");
+      }
     },
-    [announce, selectedItems, setContextMenu],
+    [notify, selectedItems, setContextMenu],
+  );
+
+  const copyItem = useCallback(
+    async (id: string) => {
+      try {
+        await copyItems([id], "native");
+      } catch (error) {
+        notify(copyErrorMessage(error), "error");
+        throw error;
+      }
+    },
+    [notify],
   );
 
   const markSelectedDone = useCallback(async () => {
@@ -83,6 +125,7 @@ export function useBulkActions({
 
   return {
     handleDeleteSelected,
+    copyItem,
     copySelected,
     markSelectedDone,
     mergeSelected,

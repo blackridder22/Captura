@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use database::{CaptureItem, Database, ItemKind, ItemStatus, Section};
+use database::{CaptureItem, Database, DatabaseError, ItemKind, ItemStatus, Section};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -30,6 +30,7 @@ const APP_BUNDLE_ID: &str = "com.autoscale.captura";
 const GLOBAL_SHORTCUT: &str = "Alt+Space";
 const SHORTCUTS_SETTING: &str = "keyboard_shortcuts";
 const KEEP_OPEN_SETTING: &str = "keep_open";
+const ACCESSIBILITY_SETUP_SEEN_SETTING: &str = "accessibility_setup_seen";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -143,11 +144,13 @@ struct AppState {
     pasteboard_change_seen: AtomicIsize,
     main_window_has_focused: AtomicBool,
     keep_open: AtomicBool,
+    accessibility_setup_seen: AtomicBool,
 }
 
 impl AppState {
     fn new() -> Result<Self, String> {
         let database_path = database_path()?;
+        let database_existed = database_path.exists();
         let database = Database::open(&database_path).map_err(|error| error.to_string())?;
         let stored_shortcuts = database
             .setting(SHORTCUTS_SETTING)
@@ -168,6 +171,7 @@ impl AppState {
             .setting(KEEP_OPEN_SETTING)
             .map_err(|error| error.to_string())?
             .is_some_and(|value| value == "true");
+        let accessibility_setup_seen = load_accessibility_setup_seen(&database, database_existed)?;
         Ok(Self {
             database,
             previous_application: Mutex::new(None),
@@ -176,16 +180,98 @@ impl AppState {
             pasteboard_change_seen: AtomicIsize::new(0),
             main_window_has_focused: AtomicBool::new(false),
             keep_open: AtomicBool::new(keep_open),
+            accessibility_setup_seen: AtomicBool::new(accessibility_setup_seen),
         })
     }
 }
 
-#[derive(Serialize)]
+fn load_accessibility_setup_seen(
+    database: &Database,
+    database_existed: bool,
+) -> Result<bool, String> {
+    match database
+        .setting(ACCESSIBILITY_SETUP_SEEN_SETTING)
+        .map_err(|error| error.to_string())?
+    {
+        Some(value) => Ok(value == "true"),
+        None if database_existed => {
+            database
+                .set_setting(ACCESSIBILITY_SETUP_SEEN_SETTING, "true")
+                .map_err(|error| error.to_string())?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PermissionStatus {
     accessibility_trusted: bool,
     post_event_trusted: bool,
     global_shortcut_registered: bool,
+    setup_seen: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum CopyMode {
+    Native,
+    SourceMarkdown,
+    MarkdownList,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CopyFormat {
+    Markdown,
+    MarkdownList,
+    Image,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CopyResult {
+    format: CopyFormat,
+    count: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CopyPayload {
+    Text {
+        content: String,
+        format: CopyFormat,
+        count: usize,
+    },
+    Image {
+        path: PathBuf,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum PastePayload {
+    Text(String),
+    Image(PathBuf),
+}
+
+enum ReadyPastePayload {
+    Text(String),
+    Image(Vec<u8>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum PermissionOperation {
+    Capture,
+    Paste,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PermissionRequiredEvent {
+    operation: PermissionOperation,
+    accessibility_trusted: bool,
+    post_event_trusted: bool,
 }
 
 fn database_path() -> Result<PathBuf, String> {
@@ -222,6 +308,94 @@ fn infer_kind(content: &str) -> ItemKind {
         ItemKind::Prompt
     } else {
         ItemKind::Note
+    }
+}
+
+fn collapse_newlines_for_list(content: &str) -> String {
+    let mut collapsed = String::new();
+    let mut in_newline = false;
+    for character in content.trim().chars() {
+        if matches!(character, '\n' | '\r') {
+            if !in_newline {
+                collapsed.push(' ');
+            }
+            in_newline = true;
+        } else {
+            collapsed.push(character);
+            in_newline = false;
+        }
+    }
+    collapsed
+}
+
+fn build_copy_payload(items: &[CaptureItem], mode: CopyMode) -> Result<CopyPayload, String> {
+    if items.is_empty() {
+        return Err("Select at least one capture to copy.".to_string());
+    }
+
+    match mode {
+        CopyMode::Native => {
+            if items.len() != 1 {
+                return Err("Native copy supports one capture at a time.".to_string());
+            }
+            let item = &items[0];
+            if item.kind == ItemKind::Image {
+                let path = item
+                    .attachment_path
+                    .as_deref()
+                    .filter(|path| !path.trim().is_empty())
+                    .ok_or_else(|| "This image capture has no stored file.".to_string())?;
+                Ok(CopyPayload::Image {
+                    path: PathBuf::from(path),
+                })
+            } else {
+                Ok(CopyPayload::Text {
+                    content: item.content.clone(),
+                    format: CopyFormat::Markdown,
+                    count: 1,
+                })
+            }
+        }
+        CopyMode::SourceMarkdown | CopyMode::MarkdownList => {
+            if items.iter().any(|item| item.kind == ItemKind::Image) {
+                return Err("Select only text captures to copy Markdown.".to_string());
+            }
+            let content = match mode {
+                CopyMode::SourceMarkdown => items
+                    .iter()
+                    .map(|item| item.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+                CopyMode::MarkdownList => items
+                    .iter()
+                    .map(|item| format!("- {}", collapse_newlines_for_list(&item.content)))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                CopyMode::Native => unreachable!(),
+            };
+            Ok(CopyPayload::Text {
+                content,
+                format: if mode == CopyMode::SourceMarkdown {
+                    CopyFormat::Markdown
+                } else {
+                    CopyFormat::MarkdownList
+                },
+                count: items.len(),
+            })
+        }
+    }
+}
+
+fn build_paste_payload(item: &CaptureItem) -> Result<PastePayload, String> {
+    if item.kind == ItemKind::Image {
+        let path = item
+            .attachment_path
+            .as_deref()
+            .filter(|path| !path.trim().is_empty())
+            .ok_or_else(|| "This image capture has no stored file.".to_string())?;
+        Ok(PastePayload::Image(PathBuf::from(path)))
+    } else {
+        Ok(PastePayload::Text(item.content.clone()))
     }
 }
 
@@ -285,6 +459,39 @@ fn delete_item(state: State<'_, AppState>, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn copy_items(
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    mode: CopyMode,
+) -> Result<CopyResult, String> {
+    let items = ids
+        .iter()
+        .map(|id| state.database.get_item(id))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+
+    match build_copy_payload(&items, mode)? {
+        CopyPayload::Text {
+            content,
+            format,
+            count,
+        } => {
+            macos::write_clipboard_text(&content).map_err(|error| error.to_string())?;
+            Ok(CopyResult { format, count })
+        }
+        CopyPayload::Image { path } => {
+            let png = std::fs::read(&path)
+                .map_err(|_| "The image file for this capture is missing.".to_string())?;
+            macos::write_clipboard_image(&png).map_err(|error| error.to_string())?;
+            Ok(CopyResult {
+                format: CopyFormat::Image,
+                count: 1,
+            })
+        }
+    }
+}
+
+#[tauri::command]
 fn import_image_files(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -333,6 +540,15 @@ fn create_section(state: State<'_, AppState>, name: String) -> Result<Section, S
 }
 
 #[tauri::command]
+fn delete_section(state: State<'_, AppState>, id: String) -> Result<Vec<CaptureItem>, String> {
+    match state.database.delete_section(&id) {
+        Ok(items) => Ok(items),
+        Err(DatabaseError::NotFound) => Err("Section not found.".to_string()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
 fn move_items_to_section(
     state: State<'_, AppState>,
     ids: Vec<String>,
@@ -354,6 +570,11 @@ fn merge_items(state: State<'_, AppState>, ids: Vec<String>) -> Result<CaptureIt
 
 #[tauri::command]
 async fn paste_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
+    if let Some(requirement) = live_permission_requirement(PermissionOperation::Paste) {
+        show_permission_repair(&app, requirement);
+        return Err("Accessibility is required to paste back.".to_string());
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let item = state
@@ -370,19 +591,24 @@ async fn paste_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
                     .to_string()
             })?;
 
+        let payload = match build_paste_payload(&item)? {
+            PastePayload::Text(content) => ReadyPastePayload::Text(content),
+            PastePayload::Image(path) => ReadyPastePayload::Image(
+                std::fs::read(path)
+                    .map_err(|_| "The image file for this capture is missing.".to_string())?,
+            ),
+        };
+
         if !state.keep_open.load(Ordering::Relaxed) {
             hide_window(&app, "main");
         }
-        if item.kind == ItemKind::Image {
-            let path = item
-                .attachment_path
-                .as_deref()
-                .ok_or_else(|| "This image capture has no stored file.".to_string())?;
-            let png = std::fs::read(path)
-                .map_err(|_| "The image file for this capture is missing.".to_string())?;
-            macos::paste_image(&png, &target).map_err(|error| error.to_string())?;
-        } else {
-            macos::paste_text(&item.content, &target).map_err(|error| error.to_string())?;
+        match payload {
+            ReadyPastePayload::Text(content) => {
+                macos::paste_text(&content, &target).map_err(|error| error.to_string())?;
+            }
+            ReadyPastePayload::Image(png) => {
+                macos::paste_image(&png, &target).map_err(|error| error.to_string())?;
+            }
         }
         state
             .database
@@ -399,17 +625,68 @@ fn hide_main_window(app: AppHandle) {
 }
 
 #[tauri::command]
+fn show_main_window(app: AppHandle) {
+    present_main_window(&app, false);
+}
+
+#[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-#[tauri::command]
-fn permission_status(state: State<'_, AppState>) -> PermissionStatus {
+fn current_permission_status(state: &AppState) -> PermissionStatus {
     PermissionStatus {
         accessibility_trusted: macos::accessibility_trusted(),
         post_event_trusted: macos::post_event_trusted(),
         global_shortcut_registered: state.shortcut_registered.load(Ordering::Relaxed),
+        setup_seen: state.accessibility_setup_seen.load(Ordering::Relaxed),
     }
+}
+
+fn permission_requirement(
+    operation: PermissionOperation,
+    accessibility_trusted: bool,
+    post_event_trusted: bool,
+) -> Option<PermissionRequiredEvent> {
+    let unavailable = match operation {
+        PermissionOperation::Capture => !accessibility_trusted || !post_event_trusted,
+        PermissionOperation::Paste => !post_event_trusted,
+    };
+    unavailable.then_some(PermissionRequiredEvent {
+        operation,
+        accessibility_trusted,
+        post_event_trusted,
+    })
+}
+
+fn live_permission_requirement(operation: PermissionOperation) -> Option<PermissionRequiredEvent> {
+    permission_requirement(
+        operation,
+        macos::accessibility_trusted(),
+        macos::post_event_trusted(),
+    )
+}
+
+fn show_permission_repair(app: &AppHandle, requirement: PermissionRequiredEvent) {
+    present_main_window(app, false);
+    let _ = app.emit("captura://permission-required", requirement);
+}
+
+#[tauri::command]
+fn permission_status(state: State<'_, AppState>) -> PermissionStatus {
+    current_permission_status(&state)
+}
+
+#[tauri::command]
+fn mark_accessibility_setup_seen(state: State<'_, AppState>) -> Result<PermissionStatus, String> {
+    state
+        .database
+        .set_setting(ACCESSIBILITY_SETUP_SEEN_SETTING, "true")
+        .map_err(|error| error.to_string())?;
+    state
+        .accessibility_setup_seen
+        .store(true, Ordering::Relaxed);
+    Ok(current_permission_status(&state))
 }
 
 fn current_app_settings(state: &AppState) -> Result<AppSettings, String> {
@@ -588,6 +865,11 @@ fn request_accessibility() -> bool {
     macos::request_accessibility()
 }
 
+#[tauri::command]
+fn open_accessibility_settings() -> Result<(), String> {
+    macos::open_accessibility_settings().map_err(|error| error.to_string())
+}
+
 fn store_previous_application(app: &AppHandle, active: ActiveApplication) {
     if active.bundle_id.as_deref() == Some(APP_BUNDLE_ID) {
         return;
@@ -607,6 +889,11 @@ fn remember_frontmost_application(app: &AppHandle) {
 }
 
 fn handle_global_capture(app: AppHandle) {
+    if let Some(requirement) = live_permission_requirement(PermissionOperation::Capture) {
+        show_permission_repair(&app, requirement);
+        return;
+    }
+
     remember_frontmost_application(&app);
     let previous = app
         .state::<AppState>()
@@ -670,7 +957,9 @@ fn handle_global_capture(app: AppHandle) {
                         &state,
                         &png,
                         "Image capture",
-                        previous.as_ref().map(|application| application.name.as_str()),
+                        previous
+                            .as_ref()
+                            .map(|application| application.name.as_str()),
                         previous
                             .as_ref()
                             .and_then(|application| application.bundle_id.as_deref()),
@@ -680,12 +969,15 @@ fn handle_global_capture(app: AppHandle) {
                         show_capture_hud(&app, &item);
                     }
                 }
-                None => show_main_window(&app, true),
+                None => present_main_window(&app, true),
             }
         }
         Err(_) => {
-            show_main_window(&app, true);
-            let _ = app.emit("captura://permission-needed", ());
+            if let Some(requirement) = live_permission_requirement(PermissionOperation::Capture) {
+                show_permission_repair(&app, requirement);
+            } else {
+                present_main_window(&app, true);
+            }
         }
     }
 
@@ -723,15 +1015,11 @@ fn capture_clipboard(app: &AppHandle) {
             )
             .map_err(|error| error.to_string()),
         None => match macos::clipboard_image_png() {
-            Some(png) => create_image_capture(
-                &state,
-                &png,
-                "Image capture",
-                source_app,
-                source_bundle_id,
-            ),
+            Some(png) => {
+                create_image_capture(&state, &png, "Image capture", source_app, source_bundle_id)
+            }
             None => {
-                show_main_window(app, true);
+                present_main_window(app, true);
                 return;
             }
         },
@@ -779,7 +1067,7 @@ fn create_image_capture(
     result
 }
 
-fn show_main_window(app: &AppHandle, focus_composer: bool) {
+fn present_main_window(app: &AppHandle, focus_composer: bool) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
@@ -908,7 +1196,7 @@ pub fn run() {
                     } = event
                     {
                         remember_frontmost_application(tray.app_handle());
-                        show_main_window(tray.app_handle(), false);
+                        present_main_window(tray.app_handle(), false);
                     }
                 })
                 .build(app)?;
@@ -918,11 +1206,12 @@ pub fn run() {
                 .shortcuts
                 .lock()
                 .map(|shortcuts| {
-                    (shortcuts.capture.clone(), shortcuts.capture_clipboard.clone())
+                    (
+                        shortcuts.capture.clone(),
+                        shortcuts.capture_clipboard.clone(),
+                    )
                 })
-                .unwrap_or_else(|_| {
-                    (GLOBAL_SHORTCUT.to_string(), "Alt+Shift+Space".to_string())
-                });
+                .unwrap_or_else(|_| (GLOBAL_SHORTCUT.to_string(), "Alt+Shift+Space".to_string()));
             let registered = app
                 .global_shortcut()
                 .register(capture_shortcut.as_str())
@@ -990,22 +1279,172 @@ pub fn run() {
             update_item,
             toggle_item,
             delete_item,
+            copy_items,
             import_image_files,
             list_sections,
             create_section,
+            delete_section,
             move_items_to_section,
             merge_items,
             paste_item,
             hide_main_window,
+            show_main_window,
             quit_app,
             permission_status,
+            mark_accessibility_setup_seen,
             get_app_settings,
             set_shortcut,
             reset_shortcuts,
             set_keep_open,
             capture_clipboard_now,
             request_accessibility,
+            open_accessibility_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Captura");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn capture(id: &str, kind: ItemKind, content: &str, attachment: Option<&str>) -> CaptureItem {
+        CaptureItem {
+            id: id.to_string(),
+            kind,
+            content: content.to_string(),
+            status: ItemStatus::Open,
+            source_app: None,
+            source_bundle_id: None,
+            section_id: None,
+            attachment_path: attachment.map(str::to_string),
+            created_at: "2026-08-04T00:00:00Z".to_string(),
+            updated_at: "2026-08-04T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn source_markdown_copy_preserves_every_byte_and_visible_order() {
+        let first = capture(
+            "first",
+            ItemKind::Note,
+            "# Heading\n\n- parent\n  - child\n\n[Link](https://example.com)",
+            None,
+        );
+        let second = capture(
+            "second",
+            ItemKind::Prompt,
+            "```rust\nfn main() {}\n```\n\nTrailing paragraph.",
+            None,
+        );
+
+        let payload =
+            build_copy_payload(&[first.clone(), second.clone()], CopyMode::SourceMarkdown)
+                .expect("source markdown payload");
+        assert_eq!(
+            payload,
+            CopyPayload::Text {
+                content: format!("{}\n\n{}", first.content, second.content),
+                format: CopyFormat::Markdown,
+                count: 2,
+            }
+        );
+
+        let native = build_copy_payload(std::slice::from_ref(&first), CopyMode::Native)
+            .expect("native text payload");
+        assert_eq!(
+            native,
+            CopyPayload::Text {
+                content: first.content.clone(),
+                format: CopyFormat::Markdown,
+                count: 1,
+            }
+        );
+        assert_eq!(
+            build_paste_payload(&first).expect("text paste payload"),
+            PastePayload::Text(first.content)
+        );
+    }
+
+    #[test]
+    fn markdown_list_copy_remains_deterministic() {
+        let items = [
+            capture("one", ItemKind::Note, "First\n\n  continuation", None),
+            capture("two", ItemKind::Link, "Second\r\nline", None),
+        ];
+        assert_eq!(
+            build_copy_payload(&items, CopyMode::MarkdownList).expect("list payload"),
+            CopyPayload::Text {
+                content: "- First   continuation\n- Second line".to_string(),
+                format: CopyFormat::MarkdownList,
+                count: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn image_and_mixed_copy_rules_are_explicit() {
+        let image = capture(
+            "image",
+            ItemKind::Image,
+            "Image capture",
+            Some("/tmp/captura.png"),
+        );
+        let text = capture("text", ItemKind::Note, "Text", None);
+        assert_eq!(
+            build_copy_payload(std::slice::from_ref(&image), CopyMode::Native)
+                .expect("image payload"),
+            CopyPayload::Image {
+                path: PathBuf::from("/tmp/captura.png"),
+            }
+        );
+        assert_eq!(
+            build_paste_payload(&image).expect("image paste payload"),
+            PastePayload::Image(PathBuf::from("/tmp/captura.png"))
+        );
+        assert_eq!(
+            build_copy_payload(&[text, image], CopyMode::SourceMarkdown),
+            Err("Select only text captures to copy Markdown.".to_string())
+        );
+        let missing = capture("missing", ItemKind::Image, "Image capture", None);
+        assert_eq!(
+            build_copy_payload(&[missing], CopyMode::Native),
+            Err("This image capture has no stored file.".to_string())
+        );
+    }
+
+    #[test]
+    fn permission_preflight_is_operation_specific() {
+        assert!(permission_requirement(PermissionOperation::Capture, false, true).is_some());
+        assert!(permission_requirement(PermissionOperation::Capture, true, false).is_some());
+        assert!(permission_requirement(PermissionOperation::Capture, true, true).is_none());
+        assert!(permission_requirement(PermissionOperation::Paste, false, true).is_none());
+        assert!(permission_requirement(PermissionOperation::Paste, true, false).is_some());
+    }
+
+    #[test]
+    fn accessibility_setup_seen_handles_fresh_and_existing_databases() {
+        let directory = tempdir().expect("temporary directory");
+        let fresh_path = directory.path().join("fresh.db");
+        let fresh = Database::open(&fresh_path).expect("fresh database");
+        assert!(!load_accessibility_setup_seen(&fresh, false).expect("fresh setup state"));
+        fresh
+            .set_setting(ACCESSIBILITY_SETUP_SEEN_SETTING, "true")
+            .expect("mark setup seen");
+        drop(fresh);
+        let reopened = Database::open(&fresh_path).expect("reopen database");
+        assert!(load_accessibility_setup_seen(&reopened, true).expect("persisted setup state"));
+
+        let existing_path = directory.path().join("existing.db");
+        let existing = Database::open(&existing_path).expect("existing database");
+        assert!(load_accessibility_setup_seen(&existing, true).expect("upgrade setup state"));
+        assert_eq!(
+            existing
+                .setting(ACCESSIBILITY_SETUP_SEEN_SETTING)
+                .expect("persisted compatibility state")
+                .as_deref(),
+            Some("true")
+        );
+    }
 }

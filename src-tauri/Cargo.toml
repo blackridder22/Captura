@@ -54,6 +54,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSNotification",
     "NSOperation",
     "NSString",
+    "NSURL",
 ] }
 
 [dev-dependencies]

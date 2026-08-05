@@ -25,7 +25,9 @@ import { QueueContextMenu } from "./components/queue-context-menu";
 import { QueueHeader } from "./components/queue-header";
 import { QueueItem } from "./components/queue-item";
 import { SectionBar } from "./components/section-bar";
+import { SectionContextMenu } from "./components/section-context-menu";
 import { SettingsSheet } from "./components/settings-sheet";
+import { WelcomeSetup } from "./components/welcome-setup";
 import { Kbd } from "./components/ui/kbd";
 
 export default function App() {
@@ -43,6 +45,7 @@ export default function App() {
     removeItems,
     applyUpdatedItems,
     addSection,
+    removeSection,
     sectionNames,
   } = useQueueData();
   const {
@@ -88,8 +91,14 @@ export default function App() {
     openSettings,
     dismissTop,
   } = useOverlays();
-  const { permissions, refreshPermissions, showOnboarding, dismissOnboarding } =
-    usePermissions(settingsOpen);
+  const {
+    permissions,
+    experience: permissionExperience,
+    refreshPermissions,
+    completeSetup,
+    continueInLimitedMode,
+    handlePermissionRequired,
+  } = usePermissions(settingsOpen);
   const { announcement, toast, announce, notify } = useNotify();
   const {
     status: updateStatus,
@@ -111,15 +120,19 @@ export default function App() {
     handlePaste,
     handleCaptured,
     handleCreateSection,
+    handleDeleteSection,
   } = useItemActions({
     prependItem,
     prependDeduped,
     replaceItem,
     removeItems,
     addSection,
+    removeSection,
+    applyUpdatedItems,
     sectionFilter,
     setFilter,
     setSectionFilter,
+    setContextMenu,
     setSingle,
     announce,
     notify,
@@ -133,6 +146,7 @@ export default function App() {
 
   const {
     handleDeleteSelected,
+    copyItem,
     copySelected,
     markSelectedDone,
     mergeSelected,
@@ -147,6 +161,7 @@ export default function App() {
     clearSelection,
     setContextMenu,
     announce,
+    notify,
   });
 
   const {
@@ -167,6 +182,7 @@ export default function App() {
     refreshPermissions,
     onCapturedItem: handleCaptured,
     focusComposer,
+    onPermissionRequiredEvent: handlePermissionRequired,
   });
 
   useKeyboardShortcuts({
@@ -188,6 +204,14 @@ export default function App() {
     handleDeleteSelected,
   });
 
+  const sectionMenu =
+    contextMenu?.kind === "section"
+      ? sections.find((section) => section.id === contextMenu.sectionId) ?? null
+      : null;
+  const sectionMenuCaptureCount = sectionMenu
+    ? items.filter((item) => item.sectionId === sectionMenu.id).length
+    : 0;
+
   return (
     <main
       className="app-frame"
@@ -205,10 +229,24 @@ export default function App() {
           closeShortcut={appSettings.shortcuts.close}
         />
 
-        {showOnboarding ? (
+        {permissionExperience === "welcome" && permissions ? (
+          <WelcomeSetup
+            permissions={permissions}
+            captureShortcut={appSettings.shortcuts.capture}
+            onOpenAccessibility={requestAccessibilityAndRefresh}
+            onStart={completeSetup}
+            onContinueLimited={continueInLimitedMode}
+          />
+        ) : null}
+
+        {permissionExperience === "repair" ||
+        permissionExperience === "limited" ||
+        permissionExperience === "shortcutConflict" ? (
           <PermissionBanner
-            onAllow={() => void requestAccessibilityAndRefresh()}
-            onDismiss={dismissOnboarding}
+            experience={permissionExperience}
+            onOpenAccessibility={requestAccessibilityAndRefresh}
+            onCheckAgain={refreshPermissions}
+            onOpenShortcutSettings={openSettings}
           />
         ) : null}
 
@@ -229,6 +267,15 @@ export default function App() {
           active={sectionFilter}
           onChange={setSectionFilter}
           onCreate={handleCreateSection}
+          onContextMenu={(section, event) => {
+            setContextMenu({
+              kind: "section",
+              x: event.clientX,
+              y: event.clientY,
+              sectionId: section.id,
+              confirmingDelete: false,
+            });
+          }}
         />
 
         <section
@@ -264,15 +311,16 @@ export default function App() {
                   if (!isSelected(item.id)) {
                     setSingle(item.id);
                   }
-                  setContextMenu({ x: event.clientX, y: event.clientY });
+                  setContextMenu({
+                    kind: "queue",
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
                 }}
                 onToggle={() => void handleToggle(item.id)}
                 onEdit={() => setEditingItem(item)}
                 onDelete={() => void handleDelete(item.id)}
-                onCopy={() => {
-                  void navigator.clipboard.writeText(item.content);
-                  announce("Copied");
-                }}
+                onCopy={() => copyItem(item.id)}
                 onPaste={() => void handlePaste(item.id)}
                 pasteShortcut={appSettings.shortcuts.paste}
               />
@@ -322,15 +370,19 @@ export default function App() {
         </footer>
       </section>
 
-      {contextMenu ? (
+      {contextMenu?.kind === "queue" ? (
         <QueueContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          count={selectedItems.length}
+          items={selectedItems}
           sections={sections}
           shortcuts={appSettings.shortcuts}
           onCopy={() => void copySelected(false)}
           onCopyAsList={() => void copySelected(true)}
+          onPaste={() => {
+            if (selectedItems[0]) void handlePaste(selectedItems[0].id);
+            setContextMenu(null);
+          }}
           onDone={() => void markSelectedDone()}
           onExpand={() => {
             setPreviewItems(selectedItems);
@@ -343,6 +395,25 @@ export default function App() {
           onMerge={() => void mergeSelected()}
           onMove={(sectionId) => void moveSelected(sectionId)}
           onDelete={() => void handleDeleteSelected()}
+        />
+      ) : null}
+
+      {contextMenu?.kind === "section" && sectionMenu ? (
+        <SectionContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          name={sectionMenu.name}
+          count={sectionMenuCaptureCount}
+          confirmingDelete={contextMenu.confirmingDelete}
+          onAskDelete={() =>
+            setContextMenu((current) =>
+              current?.kind === "section"
+                ? { ...current, confirmingDelete: true }
+                : current,
+            )
+          }
+          onCancel={() => setContextMenu(null)}
+          onDelete={() => void handleDeleteSection(sectionMenu.id)}
         />
       ) : null}
 

@@ -2,6 +2,12 @@ export type ItemKind = "prompt" | "note" | "link" | "image";
 export type ItemStatus = "open" | "done";
 export type QueueFilter = "inbox" | "prompts" | "notes" | "done";
 export type SectionFilter = "all" | "unfiled" | string;
+export type CopyMode = "native" | "sourceMarkdown" | "markdownList";
+
+export type CopyResult = {
+  format: "markdown" | "markdownList" | "image";
+  count: number;
+};
 
 export type ShortcutAction =
   | "capture"
@@ -63,4 +69,21 @@ export type PermissionStatus = {
   accessibilityTrusted: boolean;
   postEventTrusted: boolean;
   globalShortcutRegistered: boolean;
+  setupSeen: boolean;
 };
+
+export type PermissionRequiredEvent = {
+  operation: "capture" | "paste";
+  accessibilityTrusted: boolean;
+  postEventTrusted: boolean;
+};
+
+export type ContextMenu =
+  | { kind: "queue"; x: number; y: number }
+  | {
+      kind: "section";
+      x: number;
+      y: number;
+      sectionId: string;
+      confirmingDelete: boolean;
+    };

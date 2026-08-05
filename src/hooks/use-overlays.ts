@@ -1,15 +1,11 @@
 import { useCallback, useState } from "react";
 import { hideMainWindow } from "../lib/api";
-import type { CaptureItem } from "../types";
-
-export type ContextMenuPosition = { x: number; y: number };
+import type { CaptureItem, ContextMenu } from "../types";
 
 export function useOverlays() {
   const [editingItem, setEditingItem] = useState<CaptureItem | null>(null);
   const [previewItems, setPreviewItems] = useState<CaptureItem[]>([]);
-  const [contextMenu, setContextMenu] = useState<ContextMenuPosition | null>(
-    null,
-  );
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const openSettings = useCallback(() => setSettingsOpen(true), []);

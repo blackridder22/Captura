@@ -80,8 +80,8 @@ export const shortcutActions: {
   },
   {
     action: "copy",
-    label: "Copy",
-    description: "Copy selected captures.",
+    label: "Copy as Markdown",
+    description: "Copy exact Markdown source, or native image data.",
   },
   {
     action: "copyAsList",

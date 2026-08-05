@@ -390,6 +390,29 @@ impl Database {
         Ok(section)
     }
 
+    pub fn delete_section(&self, id: &str) -> Result<Vec<CaptureItem>, DatabaseError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let capture_ids = {
+            let mut statement = transaction.prepare(
+                "SELECT id FROM captures WHERE section_id = ?1 ORDER BY created_at DESC",
+            )?;
+            let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let changed = transaction.execute("DELETE FROM sections WHERE id = ?1", [id])?;
+        if changed == 0 {
+            return Err(DatabaseError::NotFound);
+        }
+        transaction.commit()?;
+        drop(connection);
+
+        capture_ids
+            .iter()
+            .map(|capture_id| self.get_item(capture_id))
+            .collect()
+    }
+
     pub fn move_items_to_section(
         &self,
         ids: &[String],
@@ -597,6 +620,47 @@ mod tests {
         assert_eq!(merged.content, "First thought\n\nSecond thought");
         assert_eq!(merged.section_id.as_deref(), Some(section.id.as_str()));
         assert_eq!(database.list_items().expect("list").len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_section_moves_its_captures_to_unfiled() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let database = Database::open(&directory.path().join("captura.db")).expect("database");
+        let section = database.create_section("Research").expect("create section");
+        let capture = database
+            .create_item("# Exact Markdown", ItemKind::Note, None, None, None)
+            .expect("create capture");
+        database
+            .move_items_to_section(std::slice::from_ref(&capture.id), Some(&section.id))
+            .expect("file capture");
+
+        let updated = database
+            .delete_section(&section.id)
+            .expect("delete section");
+
+        assert_eq!(updated.len(), 1);
+        assert_eq!(updated[0].id, capture.id);
+        assert_eq!(updated[0].section_id, None);
+        assert!(database.list_sections().expect("list sections").is_empty());
+        assert_eq!(database.list_items().expect("list captures").len(), 1);
+    }
+
+    #[test]
+    fn deleting_empty_and_missing_sections_is_deterministic() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let database = Database::open(&directory.path().join("captura.db")).expect("database");
+        let section = database.create_section("Empty").expect("create section");
+
+        assert!(database
+            .delete_section(&section.id)
+            .expect("delete empty section")
+            .is_empty());
+        assert!(matches!(
+            database
+                .delete_section("missing")
+                .expect_err("missing section must fail"),
+            DatabaseError::NotFound
+        ));
     }
 
     #[test]

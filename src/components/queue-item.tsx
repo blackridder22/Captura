@@ -2,7 +2,6 @@ import {
   Bot,
   Check,
   Circle,
-  Copy,
   FileText,
   Globe2,
   Image as ImageIcon,
@@ -17,6 +16,7 @@ import { formatCaptureTime } from "../lib/items";
 import { shortcutLabel } from "../lib/shortcuts";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
+import { CopyActionButton } from "./copy-action-button";
 
 type QueueItemProps = {
   item: CaptureItem;
@@ -28,7 +28,7 @@ type QueueItemProps = {
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onCopy: () => void;
+  onCopy: () => Promise<void>;
   onPaste: () => void;
   pasteShortcut: string;
 };
@@ -139,14 +139,7 @@ export function QueueItem({
           className="row-actions"
           onClick={(event) => event.stopPropagation()}
         >
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Copy capture"
-            onClick={onCopy}
-          >
-            <Copy size={13} />
-          </Button>
+          <CopyActionButton kind={item.kind} onCopy={onCopy} />
           <Button
             variant="ghost"
             size="icon"
@@ -170,7 +163,7 @@ export function QueueItem({
             className="paste-button"
             onClick={onPaste}
           >
-            Paste
+            {item.kind === "image" ? "Paste Image" : "Paste Markdown"}
             <kbd>{shortcutLabel(pasteShortcut)}</kbd>
           </Button>
         </div>

@@ -161,8 +161,14 @@ fn collect_checks(app: &AppHandle) -> Vec<SmokeCheck> {
     ));
 
     // Reported-only: permission grants cannot exist on unattended machines.
-    checks.push(report_only("accessibility_trusted", macos::accessibility_trusted()));
-    checks.push(report_only("post_event_trusted", macos::post_event_trusted()));
+    checks.push(report_only(
+        "accessibility_trusted",
+        macos::accessibility_trusted(),
+    ));
+    checks.push(report_only(
+        "post_event_trusted",
+        macos::post_event_trusted(),
+    ));
     checks.push(report_only(
         "frontmost_query_ok",
         macos::frontmost_application().is_ok(),
