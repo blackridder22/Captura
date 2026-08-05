@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Inbox, Keyboard } from "lucide-react";
+import { ArrowDown, ArrowUp, Inbox, Keyboard, ListChecks } from "lucide-react";
 import { useCallback, useRef } from "react";
 import { hideMainWindow, quitApp, updateItem } from "./lib/api";
 import { shortcutLabel } from "./lib/shortcuts";
@@ -15,6 +15,7 @@ import { useQueueData } from "./hooks/use-queue-data";
 import { useQueueFilters } from "./hooks/use-queue-filters";
 import { useSelection } from "./hooks/use-selection";
 import { useSettingsActions } from "./hooks/use-settings-actions";
+import { useShiftSelectionMode } from "./hooks/use-shift-selection-mode";
 import { useUpdater } from "./hooks/use-updater";
 import { EditSheet } from "./components/edit-sheet";
 import { PermissionBanner } from "./components/permission-banner";
@@ -106,6 +107,7 @@ export default function App() {
     installUpdate,
   } = useUpdater({ notify });
   const { dropping } = useFileDrop({ notify });
+  const shiftSelectionMode = useShiftSelectionMode();
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -283,6 +285,7 @@ export default function App() {
           role="listbox"
           aria-label="Captured items"
           aria-multiselectable="true"
+          data-selection-mode={shiftSelectionMode}
         >
           {loading ? (
             <div className="loading-list" aria-label="Loading captures">
@@ -297,6 +300,7 @@ export default function App() {
                 item={item}
                 selected={item.id === selectedId}
                 multiSelected={selectedIds.includes(item.id)}
+                selectionMode={shiftSelectionMode}
                 sectionName={
                   item.sectionId ? sectionNames.get(item.sectionId) : undefined
                 }
@@ -318,6 +322,9 @@ export default function App() {
                   });
                 }}
                 onToggle={() => void handleToggle(item.id)}
+                onSelectionControl={() =>
+                  selectWith(item.id, { toggle: false, range: true })
+                }
                 onEdit={() => setEditingItem(item)}
                 onDelete={() => void handleDelete(item.id)}
                 onCopy={() => copyItem(item.id)}
@@ -342,31 +349,44 @@ export default function App() {
           )}
         </section>
 
-        <footer className="shortcut-strip">
-          <span>
-            <Keyboard size={12} />
-            <Kbd>{shortcutLabel(appSettings.shortcuts.capture)}</Kbd>
-            capture
-          </span>
-          <i />
-          <span>
-            <Kbd>{shortcutLabel(appSettings.shortcuts.paste)}</Kbd>
-            paste
-          </span>
-          <i />
-          <span>
-            {appSettings.shortcuts.previous === "ArrowUp" ? (
-              <ArrowUp size={11} />
-            ) : (
-              <Kbd>{shortcutLabel(appSettings.shortcuts.previous)}</Kbd>
-            )}
-            {appSettings.shortcuts.next === "ArrowDown" ? (
-              <ArrowDown size={11} />
-            ) : (
-              <Kbd>{shortcutLabel(appSettings.shortcuts.next)}</Kbd>
-            )}
-            navigate
-          </span>
+        <footer
+          className="shortcut-strip"
+          data-selection-mode={shiftSelectionMode}
+        >
+          {shiftSelectionMode ? (
+            <span className="selection-mode-status" role="status">
+              <ListChecks size={12} />
+              <strong>Selection mode</strong>
+              <small>click a row or circle</small>
+            </span>
+          ) : (
+            <>
+              <span>
+                <Keyboard size={12} />
+                <Kbd>{shortcutLabel(appSettings.shortcuts.capture)}</Kbd>
+                capture
+              </span>
+              <i />
+              <span>
+                <Kbd>{shortcutLabel(appSettings.shortcuts.paste)}</Kbd>
+                paste
+              </span>
+              <i />
+              <span>
+                {appSettings.shortcuts.previous === "ArrowUp" ? (
+                  <ArrowUp size={11} />
+                ) : (
+                  <Kbd>{shortcutLabel(appSettings.shortcuts.previous)}</Kbd>
+                )}
+                {appSettings.shortcuts.next === "ArrowDown" ? (
+                  <ArrowDown size={11} />
+                ) : (
+                  <Kbd>{shortcutLabel(appSettings.shortcuts.next)}</Kbd>
+                )}
+                navigate
+              </span>
+            </>
+          )}
         </footer>
       </section>
 

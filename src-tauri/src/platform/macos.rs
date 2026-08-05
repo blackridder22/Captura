@@ -9,9 +9,9 @@ use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
     NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSPasteboard, NSPasteboardType,
-    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSRunningApplication,
-    NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
-    NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
+    NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF,
+    NSRunningApplication, NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior,
+    NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
 };
 use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 use objc2_foundation::{
@@ -312,6 +312,35 @@ pub fn clipboard_text() -> Option<String> {
         .map(|value| value.to_string())
 }
 
+fn clipboard_html() -> Option<String> {
+    NSPasteboard::generalPasteboard()
+        .stringForType(unsafe { NSPasteboardTypeHTML })
+        .map(|value| value.to_string())
+}
+
+fn markdown_from_html(html: &str) -> Option<String> {
+    let markdown = html2markdown::convert(html);
+    let markdown = markdown.trim();
+    (!markdown.is_empty()).then(|| markdown.to_string())
+}
+
+fn captured_pasteboard_selection() -> Option<CapturedSelection> {
+    // A copied image may also advertise plain text or HTML (for example, its
+    // source URL). Prefer the actual pixels whenever an image flavor exists.
+    if let Some(png) = clipboard_image_png() {
+        return Some(CapturedSelection::Image(png));
+    }
+
+    if let Some(markdown) = clipboard_html().and_then(|html| markdown_from_html(&html)) {
+        return Some(CapturedSelection::Text(markdown));
+    }
+
+    clipboard_text().and_then(|text| {
+        let text = text.trim();
+        (!text.is_empty()).then(|| CapturedSelection::Text(text.to_string()))
+    })
+}
+
 /// Reads a clipboard image as PNG bytes, converting TIFF (the common
 /// pasteboard flavor for screenshots and app copies) when necessary.
 pub fn clipboard_image_png() -> Option<Vec<u8>> {
@@ -443,9 +472,10 @@ pub enum CapturedSelection {
 pub fn copy_selection(
     application: Option<&ActiveApplication>,
 ) -> Result<Option<CapturedSelection>, PlatformError> {
-    if let Some(selection) = application.and_then(selected_text_via_accessibility) {
-        return Ok(Some(CapturedSelection::Text(selection)));
-    }
+    // Keep Accessibility text only as a fallback. Rich sources such as
+    // browsers and Electron apps expose structure (headings, lists, links,
+    // code) through the pasteboard, while AXSelectedText is necessarily flat.
+    let accessibility_fallback = application.and_then(selected_text_via_accessibility);
 
     if !post_event_trusted() {
         return Err(PlatformError::AccessibilityPermission);
@@ -455,28 +485,19 @@ pub fn copy_selection(
     let sentinel = format!("captura-selection-{}", Uuid::new_v4());
     let captured = (|| {
         write_clipboard_text(&sentinel)?;
+        let sentinel_change = pasteboard_change_count();
         post_command_key(KeyCode::ANSI_C)?;
 
         for _ in 0..12 {
             thread::sleep(Duration::from_millis(25));
-            let value = clipboard_text();
-            if value.as_deref() != Some(sentinel.as_str()) {
-                // The source app replaced our sentinel: inspect what it put
-                // there before the snapshot below wipes it.
-                if let Some(text) = value {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        return Ok(Some(CapturedSelection::Text(trimmed.to_string())));
-                    }
-                }
-                if let Some(png) = clipboard_image_png() {
-                    return Ok(Some(CapturedSelection::Image(png)));
-                }
-                return Ok(None);
+            if pasteboard_change_count() != sentinel_change {
+                // The source app replaced our sentinel. Read every supported
+                // flavor before restoring the user's original clipboard.
+                return Ok(captured_pasteboard_selection());
             }
         }
 
-        Ok(None)
+        Ok(accessibility_fallback.map(CapturedSelection::Text))
     })();
     snapshot.restore();
     captured
@@ -536,8 +557,11 @@ fn deliver_paste(
 }
 
 fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| PlatformError::InputEvent)?;
+    // A global shortcut may still have Option/Shift physically held when this
+    // runs. A private state table prevents those hardware modifiers from
+    // leaking into the synthetic Command+C / Command+V event.
+    let source =
+        CGEventSource::new(CGEventSourceStateID::Private).map_err(|_| PlatformError::InputEvent)?;
     let key_down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
         .map_err(|_| PlatformError::InputEvent)?;
     let key_up = CGEvent::new_keyboard_event(source, keycode, false)
@@ -593,6 +617,60 @@ mod tests {
         snapshot.restore();
 
         assert_eq!(result.expect("write text").as_deref(), Some(markdown));
+    }
+
+    #[test]
+    fn rich_html_selection_becomes_structured_markdown() {
+        let html = r#"
+            <h1>Captura v0.0.3 — Markdown Round-Trip</h1>
+            <h2>Summary</h2>
+            <p>This pass makes <strong>three</strong> workflows:</p>
+            <ol>
+              <li>Text captures preserve <a href="https://example.com/docs">links</a>.</li>
+              <li>Nested structure:
+                <ul><li>one</li><li>two</li></ul>
+              </li>
+            </ol>
+            <pre><code class="language-rust">let captured = true;
+println!("{captured}");</code></pre>
+        "#;
+
+        let markdown = markdown_from_html(html).expect("converted markdown");
+        assert_eq!(
+            markdown,
+            "# Captura v0.0.3 — Markdown Round-Trip\n\n## Summary\n\nThis pass makes **three** workflows:\n\n1. Text captures preserve [links](https://example.com/docs).\n2. Nested structure:\n   * one\n   * two\n\n```rust\nlet captured = true;\nprintln!(\"{captured}\");\n```"
+        );
+    }
+
+    #[test]
+    fn appkit_pasteboard_prefers_rich_markdown_over_flat_text() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let captured = {
+            let pasteboard = NSPasteboard::generalPasteboard();
+            let _ = pasteboard.clearContents();
+            let html_type = unsafe { NSPasteboardTypeHTML };
+            let text_type = unsafe { NSPasteboardTypeString };
+            let types = NSArray::from_slice(&[html_type, text_type]);
+            unsafe { pasteboard.declareTypes_owner(&types, None) };
+
+            let html = NSString::from_str(
+                "<h1>Heading</h1><p>A <a href=\"https://example.com\">link</a>.</p><ul><li>One</li><li>Two</li></ul>",
+            );
+            let flat = NSString::from_str("Heading\nA link.\nOne\nTwo");
+            assert!(pasteboard.setString_forType(&html, html_type));
+            assert!(pasteboard.setString_forType(&flat, text_type));
+            captured_pasteboard_selection()
+        };
+        snapshot.restore();
+
+        match captured {
+            Some(CapturedSelection::Text(markdown)) => assert_eq!(
+                markdown,
+                "# Heading\n\nA [link](https://example.com).\n\n* One\n* Two"
+            ),
+            _ => panic!("expected structured Markdown text"),
+        }
     }
 
     #[test]

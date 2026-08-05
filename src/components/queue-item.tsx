@@ -1,7 +1,5 @@
 import {
   Bot,
-  Check,
-  Circle,
   FileText,
   Globe2,
   Image as ImageIcon,
@@ -17,15 +15,18 @@ import { shortcutLabel } from "../lib/shortcuts";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
 import { CopyActionButton } from "./copy-action-button";
+import { QueueStateControl } from "./queue-state-control";
 
 type QueueItemProps = {
   item: CaptureItem;
   selected: boolean;
   multiSelected: boolean;
+  selectionMode: boolean;
   sectionName?: string;
   onSelect: (event: MouseEvent<HTMLElement>) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onToggle: () => void;
+  onSelectionControl: (event: MouseEvent<HTMLButtonElement>) => void;
   onEdit: () => void;
   onDelete: () => void;
   onCopy: () => Promise<void>;
@@ -56,10 +57,12 @@ export function QueueItem({
   item,
   selected,
   multiSelected,
+  selectionMode,
   sectionName,
   onSelect,
   onContextMenu,
   onToggle,
+  onSelectionControl,
   onEdit,
   onDelete,
   onCopy,
@@ -74,27 +77,25 @@ export function QueueItem({
       data-selected={selected}
       data-multi-selected={multiSelected}
       data-done={done}
+      data-selection-mode={selectionMode}
       onClick={onSelect}
+      onMouseDown={(event) => {
+        if (selectionMode || event.shiftKey) event.preventDefault();
+      }}
       onContextMenu={onContextMenu}
-      onDoubleClick={onEdit}
+      onDoubleClick={(event) => {
+        if (!selectionMode && !event.shiftKey) onEdit();
+      }}
       role="option"
       aria-selected={multiSelected}
     >
-      <button
-        type="button"
-        className="check-control"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        aria-label={done ? "Mark capture open" : "Mark capture done"}
-      >
-        {done ? (
-          <Check size={14} strokeWidth={2.5} />
-        ) : (
-          <Circle size={19} strokeWidth={1.5} />
-        )}
-      </button>
+      <QueueStateControl
+        done={done}
+        selected={multiSelected}
+        selectionMode={selectionMode}
+        onToggleDone={onToggle}
+        onSelect={onSelectionControl}
+      />
 
       <div className="item-copy">
         {item.kind === "image" && item.attachmentPath ? (
