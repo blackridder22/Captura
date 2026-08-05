@@ -1,47 +1,70 @@
-import { useCallback, useEffect, useState } from "react";
-import { permissionStatus } from "../lib/api";
-import type { PermissionStatus } from "../types";
-
-const initialPermissions: PermissionStatus = {
-  accessibilityTrusted: false,
-  postEventTrusted: false,
-  globalShortcutRegistered: false,
-};
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  markAccessibilitySetupSeen,
+  permissionStatus,
+  showMainWindow,
+} from "../lib/api";
+import { derivePermissionExperience } from "../lib/permission-state";
+import type { PermissionRequiredEvent, PermissionStatus } from "../types";
 
 export function usePermissions(settingsOpen: boolean) {
-  const [permissions, setPermissions] =
-    useState<PermissionStatus>(initialPermissions);
-  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
+  const [limitedMode, setLimitedMode] = useState(false);
+  const welcomePresented = useRef(false);
+  const experience = derivePermissionExperience(permissions, limitedMode);
 
   const refreshPermissions = useCallback(async () => {
-    setPermissions(await permissionStatus());
+    const next = await permissionStatus();
+    setPermissions(next);
+    if (next.accessibilityTrusted && next.postEventTrusted) setLimitedMode(false);
   }, []);
 
-  const permissionsReady =
-    permissions.accessibilityTrusted && permissions.postEventTrusted;
+  const completeSetup = useCallback(async () => {
+    setLimitedMode(false);
+    setPermissions(await markAccessibilitySetupSeen());
+  }, []);
 
-  // Keep verifying the real macOS state while it matters: fast while the
-  // settings sheet is open, slower while the onboarding banner is up — the
-  // user may grant Accessibility in System Settings at any moment.
+  const continueInLimitedMode = useCallback(async () => {
+    setLimitedMode(true);
+    setPermissions(await markAccessibilitySetupSeen());
+  }, []);
+
+  const handlePermissionRequired = useCallback(
+    (_event: PermissionRequiredEvent) => {
+      setLimitedMode(false);
+      void refreshPermissions();
+    },
+    [refreshPermissions],
+  );
+
   useEffect(() => {
-    if (!settingsOpen && permissionsReady) return;
+    if (experience !== "welcome" || welcomePresented.current) return;
+    welcomePresented.current = true;
+    void showMainWindow();
+  }, [experience]);
+
+  useEffect(() => {
+    const shouldPoll =
+      settingsOpen ||
+      experience === "welcome" ||
+      experience === "limited" ||
+      experience === "repair" ||
+      experience === "shortcutConflict";
+    if (!shouldPoll) return;
 
     void refreshPermissions();
-    const verifier = window.setInterval(
-      () => {
-        void refreshPermissions();
-      },
-      settingsOpen ? 750 : 2000,
-    );
+    const verifier = window.setInterval(() => {
+      void refreshPermissions();
+    }, 750);
     return () => window.clearInterval(verifier);
-  }, [permissionsReady, refreshPermissions, settingsOpen]);
-
-  const dismissOnboarding = useCallback(() => setOnboardingDismissed(true), []);
+  }, [experience, refreshPermissions, settingsOpen]);
 
   return {
     permissions,
+    experience,
     refreshPermissions,
-    showOnboarding: !permissionsReady && !onboardingDismissed,
-    dismissOnboarding,
+    completeSetup,
+    continueInLimitedMode,
+    handlePermissionRequired,
   };
 }

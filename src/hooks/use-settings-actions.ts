@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import {
   captureClipboardNow,
+  openAccessibilitySettings,
   requestAccessibility,
   resetShortcuts,
   setKeepOpen,
@@ -23,9 +24,21 @@ export function useSettingsActions({
   notify,
 }: SettingsActionDeps) {
   const requestAccessibilityAndRefresh = useCallback(async () => {
-    await requestAccessibility();
-    await refreshPermissions();
-  }, [refreshPermissions]);
+    try {
+      await requestAccessibility();
+      await openAccessibilitySettings();
+      await refreshPermissions();
+    } catch (error) {
+      notify(
+        typeof error === "string"
+          ? error
+          : error instanceof Error
+            ? error.message
+            : "Could not open Accessibility settings.",
+        "error",
+      );
+    }
+  }, [notify, refreshPermissions]);
 
   const changeShortcut = useCallback(
     async (action: ShortcutAction, shortcut: string) => {

@@ -20,6 +20,31 @@ describe("safe Markdown rendering", () => {
     expect(rendered).toContain('rel="noopener noreferrer"');
   });
 
+  it("keeps Markdown structure visible in compact queue rendering", () => {
+    const rendered = renderToStaticMarkup(
+      <MarkdownText
+        content={"# Visible heading\n\n- First\n- Second"}
+        compact
+      />,
+    );
+    expect(rendered).toContain('<div class="markdown-compact">');
+    expect(rendered).toContain("<h1>Visible heading</h1>");
+    expect(rendered).toContain("<li>First</li>");
+    expect(rendered).not.toContain("# Visible heading");
+  });
+
+  it("renders GFM tables and disabled task controls", () => {
+    const rendered = renderToStaticMarkup(
+      <MarkdownText
+        content={"| Name | Done |\n| --- | --- |\n| Captura | yes |\n\n- [x] Rich"}
+      />,
+    );
+    expect(rendered).toContain("<table>");
+    expect(rendered).toContain("<th>Name</th>");
+    expect(rendered).toContain('type="checkbox"');
+    expect(rendered).toContain("disabled");
+  });
+
   it("allowlists only web and email protocols", () => {
     expect(safeMarkdownUrl("https://example.com")).toBe(
       "https://example.com",

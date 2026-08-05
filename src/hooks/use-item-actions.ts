@@ -2,12 +2,19 @@ import { useCallback } from "react";
 import {
   createItem,
   createSection,
+  deleteSection,
   deleteItem,
   moveItemsToSection,
   pasteItem,
   toggleItem,
 } from "../lib/api";
-import type { CaptureItem, QueueFilter, Section, SectionFilter } from "../types";
+import type {
+  CaptureItem,
+  ContextMenu,
+  QueueFilter,
+  Section,
+  SectionFilter,
+} from "../types";
 import type { ToastTone } from "./use-notify";
 
 /// Single-item and composer actions. Stateless orchestration over the
@@ -18,9 +25,12 @@ type ItemActionDeps = {
   replaceItem: (item: CaptureItem) => void;
   removeItems: (ids: string[]) => void;
   addSection: (section: Section) => void;
+  removeSection: (id: string) => void;
+  applyUpdatedItems: (updated: CaptureItem[]) => void;
   sectionFilter: SectionFilter;
   setFilter: (filter: QueueFilter) => void;
   setSectionFilter: (filter: SectionFilter) => void;
+  setContextMenu: (menu: ContextMenu | null) => void;
   setSingle: (id: string) => void;
   announce: (text: string) => void;
   notify: (text: string, tone?: ToastTone) => void;
@@ -38,9 +48,12 @@ export function useItemActions({
   replaceItem,
   removeItems,
   addSection,
+  removeSection,
+  applyUpdatedItems,
   sectionFilter,
   setFilter,
   setSectionFilter,
+  setContextMenu,
   setSingle,
   announce,
   notify,
@@ -132,6 +145,38 @@ export function useItemActions({
     [addSection, announce, setSectionFilter],
   );
 
+  const handleDeleteSection = useCallback(
+    async (id: string) => {
+      try {
+        const updated = await deleteSection(id);
+        removeSection(id);
+        applyUpdatedItems(updated);
+        if (sectionFilter === id) setSectionFilter("unfiled");
+        setContextMenu(null);
+        notify(
+          `Section deleted. ${updated.length} capture${updated.length === 1 ? "" : "s"} moved to Unfiled.`,
+        );
+      } catch (error) {
+        notify(
+          typeof error === "string"
+            ? error
+            : error instanceof Error
+              ? error.message
+              : "Could not delete this section.",
+          "error",
+        );
+      }
+    },
+    [
+      applyUpdatedItems,
+      notify,
+      removeSection,
+      sectionFilter,
+      setContextMenu,
+      setSectionFilter,
+    ],
+  );
+
   return {
     handleCreate,
     handleToggle,
@@ -139,5 +184,6 @@ export function useItemActions({
     handlePaste,
     handleCaptured,
     handleCreateSection,
+    handleDeleteSection,
   };
 }

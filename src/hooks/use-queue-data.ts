@@ -72,6 +72,10 @@ export function useQueueData() {
     setSections((current) => [...current, section]);
   }, []);
 
+  const removeSection = useCallback((id: string) => {
+    setSections((current) => current.filter((section) => section.id !== id));
+  }, []);
+
   const sectionNames = useMemo(
     () => new Map(sections.map((section) => [section.id, section.name])),
     [sections],
@@ -91,6 +95,7 @@ export function useQueueData() {
     removeItems,
     applyUpdatedItems,
     addSection,
+    removeSection,
     sectionNames,
   };
 }

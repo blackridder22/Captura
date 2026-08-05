@@ -4,61 +4,91 @@ import { moveSelection, resolveSelection } from "./selection";
 const orderedIds = ["a", "b", "c", "d", "e"];
 
 describe("queue selection", () => {
-  it("toggles individual rows with Command without losing prior rows", () => {
-    const selected = resolveSelection({
+  it("toggles only the exact captures clicked", () => {
+    const first = resolveSelection({
       orderedIds,
-      selectedIds: ["b"],
+      selectedIds: [],
       focusedId: "b",
-      anchorId: "b",
-      targetId: "d",
+      targetId: "a",
       toggle: true,
-      range: false,
     });
-    expect(selected).toEqual({
-      selectedIds: ["b", "d"],
-      focusedId: "d",
-      anchorId: "d",
-    });
-  });
-
-  it("keeps a stable anchor across repeated Shift selections", () => {
-    const firstRange = resolveSelection({
+    const third = resolveSelection({
       orderedIds,
-      selectedIds: ["b"],
-      focusedId: "b",
-      anchorId: "b",
-      targetId: "d",
-      toggle: false,
-      range: true,
-    });
-    const secondRange = resolveSelection({
-      orderedIds,
-      ...firstRange,
+      ...first,
       targetId: "c",
-      toggle: false,
-      range: true,
+      toggle: true,
     });
-    expect(secondRange).toEqual({
-      selectedIds: ["b", "c"],
+
+    expect(third).toEqual({
+      selectedIds: ["a", "c"],
       focusedId: "c",
-      anchorId: "b",
     });
+    expect(third.selectedIds).not.toContain("b");
   });
 
-  it("extends keyboard navigation with Shift", () => {
+  it("deselects only the capture clicked again", () => {
+    expect(
+      resolveSelection({
+        orderedIds,
+        selectedIds: ["a", "c"],
+        focusedId: "c",
+        targetId: "a",
+        toggle: true,
+      }),
+    ).toEqual({ selectedIds: ["c"], focusedId: "a" });
+  });
+
+  it("plain focus never becomes an implicit bulk selection", () => {
+    expect(
+      resolveSelection({
+        orderedIds,
+        selectedIds: ["a", "c"],
+        focusedId: "c",
+        targetId: "b",
+        toggle: false,
+      }),
+    ).toEqual({ selectedIds: [], focusedId: "b" });
+  });
+
+  it("moves focus without extending a range", () => {
     expect(
       moveSelection({
         orderedIds,
-        selectedIds: ["b"],
-        focusedId: "b",
-        anchorId: "b",
+        selectedIds: ["a", "c"],
+        focusedId: "a",
         direction: 1,
-        extend: true,
+        preserveSelection: true,
       }),
     ).toEqual({
-      selectedIds: ["b", "c"],
-      focusedId: "c",
-      anchorId: "b",
+      selectedIds: ["a", "c"],
+      focusedId: "b",
     });
+  });
+
+  it("normal navigation clears explicit multi-selection", () => {
+    expect(
+      moveSelection({
+        orderedIds,
+        selectedIds: ["a", "c"],
+        focusedId: "a",
+        direction: 1,
+        preserveSelection: false,
+      }),
+    ).toEqual({
+      selectedIds: [],
+      focusedId: "b",
+    });
+  });
+
+  it("ignores stale capture ids without changing state", () => {
+    expect(
+      resolveSelection({
+        orderedIds,
+        selectedIds: ["a"],
+        focusedId: "a",
+        targetId: "missing",
+        toggle: true,
+      }),
+    ).toEqual({ selectedIds: ["a"], focusedId: "a" });
   });
 });

@@ -9,14 +9,15 @@ use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSApplicationActivationPolicy,
     NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSPasteboard, NSPasteboardType,
-    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSRunningApplication,
-    NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
-    NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
+    NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF,
+    NSRunningApplication, NSScreenSaverWindowLevel, NSWindow, NSWindowCollectionBehavior,
+    NSWorkspace, NSWorkspaceApplicationKey, NSWorkspaceDidActivateApplicationNotification,
 };
 use objc2_core_graphics::{CGPreflightPostEventAccess, CGRequestPostEventAccess};
 use objc2_foundation::{
-    NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString,
+    NSArray, NSData, NSDictionary, NSNotification, NSNumber, NSOperationQueue, NSString, NSURL,
 };
+use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use tauri::WebviewWindow;
 use thiserror::Error;
 use uuid::Uuid;
@@ -69,6 +70,8 @@ pub enum PlatformError {
     ClipboardWrite,
     #[error("could not bring {0} forward to paste — click into it once and try again")]
     PasteTarget(String),
+    #[error("could not open macOS Accessibility settings")]
+    SystemSettings,
 }
 
 type PasteboardEntry = (Retained<NSPasteboardType>, Option<Retained<NSData>>);
@@ -219,6 +222,22 @@ pub fn request_accessibility() -> bool {
     accessibility && post_events
 }
 
+pub fn open_accessibility_settings() -> Result<(), PlatformError> {
+    let destination = NSString::from_str(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    );
+    let url = NSURL::URLWithString(&destination).ok_or(PlatformError::SystemSettings)?;
+    if NSWorkspace::sharedWorkspace().openURL(&url) {
+        Ok(())
+    } else {
+        // Fall back to the system prompt if the deep link is unavailable on
+        // this macOS version. The return value reports current trust, not
+        // whether the prompt was displayed, so it is intentionally ignored.
+        let _ = request_accessibility();
+        Ok(())
+    }
+}
+
 fn active_application_from(application: &NSRunningApplication) -> ActiveApplication {
     ActiveApplication {
         pid: application.processIdentifier(),
@@ -282,12 +301,45 @@ pub fn activate_application(application: &ActiveApplication) -> bool {
         .unwrap_or(false)
 }
 
+pub fn pasteboard_change_count() -> isize {
+    NSPasteboard::generalPasteboard().changeCount()
+}
+
 pub fn clipboard_text() -> Option<String> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let string_type = unsafe { NSPasteboardTypeString };
     pasteboard
         .stringForType(string_type)
         .map(|value| value.to_string())
+}
+
+fn clipboard_html() -> Option<String> {
+    NSPasteboard::generalPasteboard()
+        .stringForType(unsafe { NSPasteboardTypeHTML })
+        .map(|value| value.to_string())
+}
+
+fn markdown_from_html(html: &str) -> Option<String> {
+    let markdown = html2markdown::convert(html);
+    let markdown = markdown.trim();
+    (!markdown.is_empty()).then(|| markdown.to_string())
+}
+
+fn captured_pasteboard_selection() -> Option<CapturedSelection> {
+    // A copied image may also advertise plain text or HTML (for example, its
+    // source URL). Prefer the actual pixels whenever an image flavor exists.
+    if let Some(png) = clipboard_image_png() {
+        return Some(CapturedSelection::Image(png));
+    }
+
+    if let Some(markdown) = clipboard_html().and_then(|html| markdown_from_html(&html)) {
+        return Some(CapturedSelection::Text(markdown));
+    }
+
+    clipboard_text().and_then(|text| {
+        let text = text.trim();
+        (!text.is_empty()).then(|| CapturedSelection::Text(text.to_string()))
+    })
 }
 
 /// Reads a clipboard image as PNG bytes, converting TIFF (the common
@@ -307,13 +359,12 @@ pub fn normalize_image_to_png(data: &[u8]) -> Option<Vec<u8>> {
     let ns_data = NSData::with_bytes(data);
     let rep = NSBitmapImageRep::imageRepWithData(&ns_data)?;
     let properties = NSDictionary::new();
-    let png = unsafe {
-        rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties)
-    }?;
+    let png =
+        unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &properties) }?;
     Some(png.to_vec())
 }
 
-fn write_clipboard_image(png: &[u8]) -> Result<(), PlatformError> {
+pub fn write_clipboard_image(png: &[u8]) -> Result<(), PlatformError> {
     let pasteboard = NSPasteboard::generalPasteboard();
     let _ = pasteboard.clearContents();
 
@@ -345,6 +396,98 @@ pub fn write_clipboard_text(value: &str) -> Result<(), PlatformError> {
     let string = NSString::from_str(value);
     let string_type = unsafe { NSPasteboardTypeString };
     if pasteboard.setString_forType(&string, string_type) {
+        Ok(())
+    } else {
+        Err(PlatformError::ClipboardWrite)
+    }
+}
+
+fn safe_markdown_destination(destination: &str) -> bool {
+    let normalized = destination
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect::<String>();
+    normalized.starts_with('#')
+        || normalized.starts_with('/')
+        || normalized.starts_with("./")
+        || normalized.starts_with("../")
+        || normalized
+            .split_once(':')
+            .map(|(scheme, _)| {
+                matches!(
+                    scheme.to_ascii_lowercase().as_str(),
+                    "http" | "https" | "mailto"
+                )
+            })
+            .unwrap_or(true)
+}
+
+fn safe_destination<'a>(destination: CowStr<'a>) -> CowStr<'a> {
+    if safe_markdown_destination(&destination) {
+        destination
+    } else {
+        CowStr::Borrowed("")
+    }
+}
+
+/// Produces the rich clipboard flavor for a Markdown capture. Raw HTML is
+/// intentionally discarded, and unsafe link/image schemes are blanked before
+/// the CommonMark event stream becomes HTML.
+fn markdown_to_safe_html(markdown: &str) -> String {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES;
+    let events = Parser::new_ext(markdown, options).filter_map(|event| match event {
+        Event::Html(_) | Event::InlineHtml(_) => None,
+        Event::Start(Tag::Link {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Link {
+            link_type,
+            dest_url: safe_destination(dest_url),
+            title,
+            id,
+        })),
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => Some(Event::Start(Tag::Image {
+            link_type,
+            dest_url: safe_destination(dest_url),
+            title,
+            id,
+        })),
+        event => Some(event),
+    });
+    let mut rendered = String::new();
+    html::push_html(&mut rendered, events);
+    rendered
+}
+
+/// Writes both clipboard representations: rich HTML for Notes, Mail, and
+/// other formatted editors, plus the exact Markdown source for terminals and
+/// plain-text editors. Consumers choose the richest format they understand.
+pub fn write_clipboard_markdown(markdown: &str) -> Result<(), PlatformError> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let _ = pasteboard.clearContents();
+    let html_type = unsafe { NSPasteboardTypeHTML };
+    let string_type = unsafe { NSPasteboardTypeString };
+    let declared = NSArray::from_slice(&[html_type, string_type]);
+    unsafe {
+        pasteboard.declareTypes_owner(&declared, None);
+    }
+
+    let rich = NSString::from_str(&markdown_to_safe_html(markdown));
+    let source = NSString::from_str(markdown);
+    if pasteboard.setString_forType(&rich, html_type)
+        && pasteboard.setString_forType(&source, string_type)
+    {
         Ok(())
     } else {
         Err(PlatformError::ClipboardWrite)
@@ -422,9 +565,10 @@ pub enum CapturedSelection {
 pub fn copy_selection(
     application: Option<&ActiveApplication>,
 ) -> Result<Option<CapturedSelection>, PlatformError> {
-    if let Some(selection) = application.and_then(selected_text_via_accessibility) {
-        return Ok(Some(CapturedSelection::Text(selection)));
-    }
+    // Keep Accessibility text only as a fallback. Rich sources such as
+    // browsers and Electron apps expose structure (headings, lists, links,
+    // code) through the pasteboard, while AXSelectedText is necessarily flat.
+    let accessibility_fallback = application.and_then(selected_text_via_accessibility);
 
     if !post_event_trusted() {
         return Err(PlatformError::AccessibilityPermission);
@@ -434,40 +578,31 @@ pub fn copy_selection(
     let sentinel = format!("captura-selection-{}", Uuid::new_v4());
     let captured = (|| {
         write_clipboard_text(&sentinel)?;
+        let sentinel_change = pasteboard_change_count();
         post_command_key(KeyCode::ANSI_C)?;
 
         for _ in 0..12 {
             thread::sleep(Duration::from_millis(25));
-            let value = clipboard_text();
-            if value.as_deref() != Some(sentinel.as_str()) {
-                // The source app replaced our sentinel: inspect what it put
-                // there before the snapshot below wipes it.
-                if let Some(text) = value {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        return Ok(Some(CapturedSelection::Text(trimmed.to_string())));
-                    }
-                }
-                if let Some(png) = clipboard_image_png() {
-                    return Ok(Some(CapturedSelection::Image(png)));
-                }
-                return Ok(None);
+            if pasteboard_change_count() != sentinel_change {
+                // The source app replaced our sentinel. Read every supported
+                // flavor before restoring the user's original clipboard.
+                return Ok(captured_pasteboard_selection());
             }
         }
 
-        Ok(None)
+        Ok(accessibility_fallback.map(CapturedSelection::Text))
     })();
     snapshot.restore();
     captured
 }
 
-pub fn paste_text(value: &str, target: &ActiveApplication) -> Result<(), PlatformError> {
+pub fn paste_markdown(value: &str, target: &ActiveApplication) -> Result<(), PlatformError> {
     if !post_event_trusted() {
         return Err(PlatformError::AccessibilityPermission);
     }
 
     let snapshot = ClipboardSnapshot::capture();
-    write_clipboard_text(value)?;
+    write_clipboard_markdown(value)?;
     deliver_paste(target, &snapshot)
 }
 
@@ -515,8 +650,11 @@ fn deliver_paste(
 }
 
 fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| PlatformError::InputEvent)?;
+    // A global shortcut may still have Option/Shift physically held when this
+    // runs. A private state table prevents those hardware modifiers from
+    // leaking into the synthetic Command+C / Command+V event.
+    let source =
+        CGEventSource::new(CGEventSourceStateID::Private).map_err(|_| PlatformError::InputEvent)?;
     let key_down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
         .map_err(|_| PlatformError::InputEvent)?;
     let key_up = CGEvent::new_keyboard_event(source, keycode, false)
@@ -533,16 +671,19 @@ fn post_command_key(keycode: u16) -> Result<(), PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static APP_KIT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     const ONE_PIXEL_PNG: [u8; 70] = [
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8,
-        6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192,
-        80, 15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
-        130,
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 252, 207, 192, 80,
+        15, 0, 4, 133, 1, 128, 132, 169, 140, 33, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
     ];
 
     #[test]
     fn normalize_image_round_trips_png() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         let png = normalize_image_to_png(&ONE_PIXEL_PNG).expect("decode png");
         assert_eq!(&png[..8], &ONE_PIXEL_PNG[..8], "PNG magic preserved");
         assert!(normalize_image_to_png(b"not an image").is_none());
@@ -550,10 +691,10 @@ mod tests {
 
     #[test]
     fn clipboard_image_write_and_read_round_trip() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         // Guard the user's clipboard: snapshot before, restore after.
         let snapshot = ClipboardSnapshot::capture();
-        let result = write_clipboard_image(&ONE_PIXEL_PNG)
-            .map(|()| clipboard_image_png());
+        let result = write_clipboard_image(&ONE_PIXEL_PNG).map(|()| clipboard_image_png());
         snapshot.restore();
 
         let read_back = result.expect("write image").expect("read image back");
@@ -561,7 +702,102 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_text_write_preserves_markdown_exactly() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let markdown = "# Heading\n\n- nested\n  - child\n\n```ts\nconst x = 1;\n```";
+        let result = write_clipboard_text(markdown).map(|()| clipboard_text());
+        snapshot.restore();
+
+        assert_eq!(result.expect("write text").as_deref(), Some(markdown));
+    }
+
+    #[test]
+    fn markdown_renderer_produces_structured_safe_html() {
+        let markdown = "# Heading\n\n- first\n- **second**\n\n[Safe](https://example.com) [Unsafe](javascript:alert(1))\n\n<script>alert('no')</script>";
+        let rendered = markdown_to_safe_html(markdown);
+
+        assert!(rendered.contains("<h1>Heading</h1>"));
+        assert!(rendered.contains("<ul>"));
+        assert!(rendered.contains("<strong>second</strong>"));
+        assert!(rendered.contains("href=\"https://example.com\""));
+        assert!(!rendered.contains("javascript:"));
+        assert!(!rendered.contains("<script"));
+    }
+
+    #[test]
+    fn clipboard_markdown_exposes_rich_html_and_exact_source() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let markdown = "# Heading\n\n1. First\n2. Second\n\n`code`";
+        let result =
+            write_clipboard_markdown(markdown).map(|()| (clipboard_html(), clipboard_text()));
+        snapshot.restore();
+
+        let (html, source) = result.expect("write dual-format Markdown");
+        let html = html.expect("HTML pasteboard flavor");
+        assert!(html.contains("<h1>Heading</h1>"));
+        assert!(html.contains("<ol>"));
+        assert_eq!(source.as_deref(), Some(markdown));
+    }
+
+    #[test]
+    fn rich_html_selection_becomes_structured_markdown() {
+        let html = r#"
+            <h1>Captura v0.0.3 — Markdown Round-Trip</h1>
+            <h2>Summary</h2>
+            <p>This pass makes <strong>three</strong> workflows:</p>
+            <ol>
+              <li>Text captures preserve <a href="https://example.com/docs">links</a>.</li>
+              <li>Nested structure:
+                <ul><li>one</li><li>two</li></ul>
+              </li>
+            </ol>
+            <pre><code class="language-rust">let captured = true;
+println!("{captured}");</code></pre>
+        "#;
+
+        let markdown = markdown_from_html(html).expect("converted markdown");
+        assert_eq!(
+            markdown,
+            "# Captura v0.0.3 — Markdown Round-Trip\n\n## Summary\n\nThis pass makes **three** workflows:\n\n1. Text captures preserve [links](https://example.com/docs).\n2. Nested structure:\n   * one\n   * two\n\n```rust\nlet captured = true;\nprintln!(\"{captured}\");\n```"
+        );
+    }
+
+    #[test]
+    fn appkit_pasteboard_prefers_rich_markdown_over_flat_text() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
+        let snapshot = ClipboardSnapshot::capture();
+        let captured = {
+            let pasteboard = NSPasteboard::generalPasteboard();
+            let _ = pasteboard.clearContents();
+            let html_type = unsafe { NSPasteboardTypeHTML };
+            let text_type = unsafe { NSPasteboardTypeString };
+            let types = NSArray::from_slice(&[html_type, text_type]);
+            unsafe { pasteboard.declareTypes_owner(&types, None) };
+
+            let html = NSString::from_str(
+                "<h1>Heading</h1><p>A <a href=\"https://example.com\">link</a>.</p><ul><li>One</li><li>Two</li></ul>",
+            );
+            let flat = NSString::from_str("Heading\nA link.\nOne\nTwo");
+            assert!(pasteboard.setString_forType(&html, html_type));
+            assert!(pasteboard.setString_forType(&flat, text_type));
+            captured_pasteboard_selection()
+        };
+        snapshot.restore();
+
+        match captured {
+            Some(CapturedSelection::Text(markdown)) => assert_eq!(
+                markdown,
+                "# Heading\n\nA [link](https://example.com).\n\n* One\n* Two"
+            ),
+            _ => panic!("expected structured Markdown text"),
+        }
+    }
+
+    #[test]
     fn active_application_from_never_produces_an_empty_name() {
+        let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         // In a bare test harness currentApplication() is a placeholder with
         // no localized name, which exercises the "Previous app" fallback.
         let current = NSRunningApplication::currentApplication();

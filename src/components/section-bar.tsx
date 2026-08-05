@@ -1,5 +1,5 @@
 import { Check, FolderPlus, Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
 import type { Section, SectionFilter } from "../types";
 
 export type { SectionFilter };
@@ -9,6 +9,10 @@ type SectionBarProps = {
   active: SectionFilter;
   onChange: (section: SectionFilter) => void;
   onCreate: (name: string) => Promise<void>;
+  onContextMenu: (
+    section: Section,
+    event: MouseEvent<HTMLButtonElement>,
+  ) => void;
 };
 
 export function SectionBar({
@@ -16,6 +20,7 @@ export function SectionBar({
   active,
   onChange,
   onCreate,
+  onContextMenu,
 }: SectionBarProps) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -44,7 +49,18 @@ export function SectionBar({
           <button
             key={section.id}
             data-active={active === section.id}
-            onClick={() => onChange(section.id)}
+            onClick={(event) => {
+              if (event.ctrlKey) {
+                event.preventDefault();
+                onContextMenu(section, event);
+              } else {
+                onChange(section.id);
+              }
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onContextMenu(section, event);
+            }}
           >
             {section.name}
           </button>

@@ -3,7 +3,10 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   CaptureItem,
+  CopyMode,
+  CopyResult,
   CreateItemInput,
+  PermissionRequiredEvent,
   PermissionStatus,
   Section,
   ShortcutAction,
@@ -14,6 +17,7 @@ import { defaultShortcuts } from "./shortcuts";
 const demoStorageKey = "captura.demo.items.v1";
 const demoSectionsKey = "captura.demo.sections.v1";
 const demoSettingsKey = "captura.demo.settings.v1";
+const demoAccessibilitySetupSeenKey = "captura.demo.accessibility-setup-seen.v1";
 
 const demoItems: CaptureItem[] = [
   {
@@ -180,6 +184,93 @@ export async function deleteItem(id: string) {
   writeDemoItems(readDemoItems().filter((item) => item.id !== id));
 }
 
+type DemoCopyPayload =
+  | { kind: "text"; text: string; result: CopyResult }
+  | { kind: "image"; path: string; result: CopyResult };
+
+function collapseNewlinesForList(content: string) {
+  return content.trim().replace(/[\r\n]+/g, " ");
+}
+
+export function buildDemoCopyPayload(
+  items: CaptureItem[],
+  mode: CopyMode,
+): DemoCopyPayload {
+  if (!items.length) throw new Error("Select at least one capture to copy.");
+
+  if (mode === "native") {
+    if (items.length !== 1) {
+      throw new Error("Native copy supports one capture at a time.");
+    }
+    const item = items[0]!;
+    if (item.kind === "image") {
+      if (!item.attachmentPath) {
+        throw new Error("This image capture has no stored file.");
+      }
+      return {
+        kind: "image",
+        path: item.attachmentPath,
+        result: { format: "image", count: 1 },
+      };
+    }
+    return {
+      kind: "text",
+      text: item.content,
+      result: { format: "markdown", count: 1 },
+    };
+  }
+
+  if (items.some((item) => item.kind === "image")) {
+    throw new Error("Select only text captures to copy Markdown.");
+  }
+  if (mode === "sourceMarkdown") {
+    return {
+      kind: "text",
+      text: items.map((item) => item.content).join("\n\n"),
+      result: { format: "markdown", count: items.length },
+    };
+  }
+  return {
+    kind: "text",
+    text: items
+      .map((item) => `- ${collapseNewlinesForList(item.content)}`)
+      .join("\n"),
+    result: { format: "markdownList", count: items.length },
+  };
+}
+
+export async function copyItems(ids: string[], mode: CopyMode) {
+  if (isTauriRuntime()) {
+    return invoke<CopyResult>("copy_items", { ids, mode });
+  }
+
+  const stored = readDemoItems();
+  const items = ids.map((id) => {
+    const item = stored.find((candidate) => candidate.id === id);
+    if (!item) throw new Error("Capture not found.");
+    return item;
+  });
+  const payload = buildDemoCopyPayload(items, mode);
+  if (payload.kind === "text") {
+    await navigator.clipboard.writeText(payload.text);
+  } else {
+    if (!("ClipboardItem" in window) || !navigator.clipboard.write) {
+      throw new Error("Image copying is unavailable in this browser preview.");
+    }
+    const response = await fetch(attachmentUrl(payload.path));
+    if (!response.ok) throw new Error("The image file for this capture is missing.");
+    const blob = await response.blob();
+    const png =
+      blob.type === "image/png"
+        ? blob
+        : new Blob([await blob.arrayBuffer()], { type: "image/png" });
+    await navigator.clipboard.write([
+      new ClipboardItem({ "image/png": png }),
+    ]);
+  }
+  return payload.result;
+}
+
 function readDemoSections() {
   try {
     return JSON.parse(localStorage.getItem(demoSectionsKey) ?? "[]") as Section[];
@@ -211,6 +302,27 @@ export async function createSection(name: string) {
   };
   writeDemoSections([...readDemoSections(), section]);
   return section;
+}
+
+export async function deleteSection(id: string) {
+  if (isTauriRuntime()) {
+    return invoke<CaptureItem[]>("delete_section", { id });
+  }
+  if (!readDemoSections().some((section) => section.id === id)) {
+    throw new Error("Section not found.");
+  }
+  writeDemoSections(readDemoSections().filter((section) => section.id !== id));
+  const now = new Date().toISOString();
+  const affectedIds = readDemoItems()
+    .filter((item) => item.sectionId === id)
+    .map((item) => item.id);
+  const updated = readDemoItems().map((item) =>
+    item.sectionId === id
+      ? { ...item, sectionId: null, updatedAt: now }
+      : item,
+  );
+  writeDemoItems(updated);
+  return updated.filter((item) => affectedIds.includes(item.id));
 }
 
 export async function moveItemsToSection(
@@ -289,6 +401,12 @@ export async function hideMainWindow() {
   }
 }
 
+export async function showMainWindow() {
+  if (isTauriRuntime()) {
+    await invoke("show_main_window");
+  }
+}
+
 export async function quitApp() {
   if (isTauriRuntime()) {
     await invoke("quit_app");
@@ -303,7 +421,17 @@ export async function permissionStatus() {
     accessibilityTrusted: true,
     postEventTrusted: true,
     globalShortcutRegistered: true,
+    setupSeen:
+      localStorage.getItem(demoAccessibilitySetupSeenKey) !== "false",
   } satisfies PermissionStatus;
+}
+
+export async function markAccessibilitySetupSeen() {
+  if (isTauriRuntime()) {
+    return invoke<PermissionStatus>("mark_accessibility_setup_seen");
+  }
+  localStorage.setItem(demoAccessibilitySetupSeenKey, "true");
+  return permissionStatus();
 }
 
 function readDemoSettings(): AppSettings {
@@ -377,6 +505,12 @@ export async function requestAccessibility() {
   return true;
 }
 
+export async function openAccessibilitySettings() {
+  if (isTauriRuntime()) {
+    await invoke("open_accessibility_settings");
+  }
+}
+
 export async function onCaptured(
   handler: (item: CaptureItem) => void,
 ): Promise<UnlistenFn> {
@@ -395,6 +529,18 @@ export async function onFocusComposer(
     return () => undefined;
   }
   return listen("captura://focus-composer", handler);
+}
+
+export async function onPermissionRequired(
+  handler: (event: PermissionRequiredEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauriRuntime()) {
+    return () => undefined;
+  }
+  return listen<PermissionRequiredEvent>(
+    "captura://permission-required",
+    (event) => handler(event.payload),
+  );
 }
 
 export async function onHudCapture(

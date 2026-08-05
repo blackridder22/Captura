@@ -21,7 +21,7 @@ import { ShortcutRecorder } from "./shortcut-recorder";
 import { Button } from "./ui/button";
 
 type SettingsSheetProps = {
-  permissions: PermissionStatus;
+  permissions: PermissionStatus | null;
   settings: AppSettings;
   onClose: () => void;
   onRequestAccessibility: () => Promise<void>;
@@ -70,7 +70,9 @@ export function SettingsSheet({
   onInstallUpdate,
 }: SettingsSheetProps) {
   const permissionsReady =
-    permissions.accessibilityTrusted && permissions.postEventTrusted;
+    Boolean(
+      permissions?.accessibilityTrusted && permissions.postEventTrusted,
+    );
 
   return (
     <div className="sheet-backdrop" onMouseDown={onClose}>
@@ -154,7 +156,11 @@ export function SettingsSheet({
             </span>
             <div>
               <strong>Capture clipboard</strong>
-              <p>Save the current clipboard without using the tray menu.</p>
+              <p>
+                Also available anywhere via{" "}
+                {shortcutLabel(settings.shortcuts.captureClipboard)} — copy an
+                image or text, press it, captured.
+              </p>
             </div>
             <Button
               variant="surface"
@@ -184,12 +190,15 @@ export function SettingsSheet({
               <Button
                 variant="surface"
                 size="sm"
+                disabled={!permissions}
                 onClick={onRequestAccessibility}
               >
-                {permissions.accessibilityTrusted ||
-                permissions.postEventTrusted
+                {permissions?.accessibilityTrusted ||
+                permissions?.postEventTrusted
                   ? "Finish"
-                  : "Allow"}
+                  : permissions
+                    ? "Allow"
+                    : "Checking"}
               </Button>
             )}
           </div>

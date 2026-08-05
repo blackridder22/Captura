@@ -1,8 +1,5 @@
 import {
   Bot,
-  Check,
-  Circle,
-  Copy,
   FileText,
   Globe2,
   Image as ImageIcon,
@@ -17,18 +14,22 @@ import { formatCaptureTime } from "../lib/items";
 import { shortcutLabel } from "../lib/shortcuts";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
+import { CopyActionButton } from "./copy-action-button";
+import { QueueStateControl } from "./queue-state-control";
 
 type QueueItemProps = {
   item: CaptureItem;
   selected: boolean;
   multiSelected: boolean;
+  selectionMode: boolean;
   sectionName?: string;
   onSelect: (event: MouseEvent<HTMLElement>) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onToggle: () => void;
+  onSelectionControl: (event: MouseEvent<HTMLButtonElement>) => void;
   onEdit: () => void;
   onDelete: () => void;
-  onCopy: () => void;
+  onCopy: () => Promise<void>;
   onPaste: () => void;
   pasteShortcut: string;
 };
@@ -56,10 +57,12 @@ export function QueueItem({
   item,
   selected,
   multiSelected,
+  selectionMode,
   sectionName,
   onSelect,
   onContextMenu,
   onToggle,
+  onSelectionControl,
   onEdit,
   onDelete,
   onCopy,
@@ -74,27 +77,25 @@ export function QueueItem({
       data-selected={selected}
       data-multi-selected={multiSelected}
       data-done={done}
+      data-selection-mode={selectionMode}
       onClick={onSelect}
+      onMouseDown={(event) => {
+        if (selectionMode || event.shiftKey) event.preventDefault();
+      }}
       onContextMenu={onContextMenu}
-      onDoubleClick={onEdit}
+      onDoubleClick={(event) => {
+        if (!selectionMode && !event.shiftKey) onEdit();
+      }}
       role="option"
       aria-selected={multiSelected}
     >
-      <button
-        type="button"
-        className="check-control"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        aria-label={done ? "Mark capture open" : "Mark capture done"}
-      >
-        {done ? (
-          <Check size={14} strokeWidth={2.5} />
-        ) : (
-          <Circle size={19} strokeWidth={1.5} />
-        )}
-      </button>
+      <QueueStateControl
+        done={done}
+        selected={multiSelected}
+        selectionMode={selectionMode}
+        onToggleDone={onToggle}
+        onSelect={onSelectionControl}
+      />
 
       <div className="item-copy">
         {item.kind === "image" && item.attachmentPath ? (
@@ -107,9 +108,9 @@ export function QueueItem({
             />
           </figure>
         ) : (
-          <p data-link={item.kind === "link"}>
+          <div className="item-markdown" data-link={item.kind === "link"}>
             <MarkdownText content={item.content} compact />
-          </p>
+          </div>
         )}
         <div className="item-meta">
           <SourceIcon item={item} />
@@ -139,14 +140,7 @@ export function QueueItem({
           className="row-actions"
           onClick={(event) => event.stopPropagation()}
         >
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Copy capture"
-            onClick={onCopy}
-          >
-            <Copy size={13} />
-          </Button>
+          <CopyActionButton kind={item.kind} onCopy={onCopy} />
           <Button
             variant="ghost"
             size="icon"
@@ -170,7 +164,7 @@ export function QueueItem({
             className="paste-button"
             onClick={onPaste}
           >
-            Paste
+            {item.kind === "image" ? "Paste Image" : "Paste formatted"}
             <kbd>{shortcutLabel(pasteShortcut)}</kbd>
           </Button>
         </div>

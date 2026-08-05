@@ -1,32 +1,57 @@
-import { ShieldAlert, X } from "lucide-react";
+import { Keyboard, ShieldAlert } from "lucide-react";
+import type { PermissionExperience } from "../lib/permission-state";
 import { Button } from "./ui/button";
 
 type PermissionBannerProps = {
-  onAllow: () => void;
-  onDismiss: () => void;
+  experience: Extract<
+    PermissionExperience,
+    "limited" | "repair" | "shortcutConflict"
+  >;
+  onOpenAccessibility: () => Promise<void>;
+  onCheckAgain: () => Promise<unknown>;
+  onOpenShortcutSettings: () => void;
 };
 
-export function PermissionBanner({ onAllow, onDismiss }: PermissionBannerProps) {
+export function PermissionBanner({
+  experience,
+  onOpenAccessibility,
+  onCheckAgain,
+  onOpenShortcutSettings,
+}: PermissionBannerProps) {
+  const shortcutConflict = experience === "shortcutConflict";
+
   return (
-    <div className="permission-banner" role="note">
+    <div className="permission-banner" role="alert">
       <span className="permission-banner-icon">
-        <ShieldAlert size={15} />
+        {shortcutConflict ? <Keyboard size={15} /> : <ShieldAlert size={15} />}
       </span>
       <p>
-        <strong>Finish setup.</strong> Captura needs Accessibility access to
-        capture selections and paste back.
+        {shortcutConflict
+          ? "Global capture shortcut is unavailable. Choose another shortcut in Settings."
+          : "Accessibility is off. Selection capture and paste back are paused."}
       </p>
-      <Button variant="accent" size="sm" onClick={onAllow}>
-        Allow
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Dismiss permission reminder"
-        onClick={onDismiss}
-      >
-        <X size={13} />
-      </Button>
+      {shortcutConflict ? (
+        <Button variant="surface" size="sm" onClick={onOpenShortcutSettings}>
+          Open Settings
+        </Button>
+      ) : (
+        <>
+          <Button
+            variant="surface"
+            size="sm"
+            onClick={() => void onOpenAccessibility()}
+          >
+            Open Settings
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void onCheckAgain()}
+          >
+            Check again
+          </Button>
+        </>
+      )}
     </div>
   );
 }

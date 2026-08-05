@@ -27,26 +27,18 @@ const safeElements = [
   "a",
   "hr",
   "br",
+  "table",
+  "thead",
+  "tbody",
+  "tr",
+  "th",
+  "td",
+  "input",
 ];
-
-const compactElements = ["p", "strong", "em", "del", "code", "a", "br"];
 
 export function safeMarkdownUrl(url: string) {
   const normalized = url.trim().replace(/[\u0000-\u001f\u007f]/g, "");
   return /^(https?:|mailto:)/i.test(normalized) ? normalized : "";
-}
-
-function compactMarkdown(content: string) {
-  return content
-    .trim()
-    .split(/\r?\n/)
-    .map((line) =>
-      line
-        .replace(/^\s{0,3}(#{1,6}|[-*+]|\d+[.)]|>)\s+/, "")
-        .trim(),
-    )
-    .filter(Boolean)
-    .join(" ");
 }
 
 export function MarkdownText({ content, compact = false }: MarkdownTextProps) {
@@ -64,27 +56,27 @@ export function MarkdownText({ content, compact = false }: MarkdownTextProps) {
         {children}
       </a>
     ),
-    ...(compact
-      ? {
-          p: ({ children }: ComponentPropsWithoutRef<"p">) => (
-            <>{children}</>
-          ),
-        }
-      : {}),
+    input: (props: ComponentPropsWithoutRef<"input">) => (
+      <input {...props} type="checkbox" disabled />
+    ),
   };
 
   const markdown = (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      allowedElements={compact ? compactElements : safeElements}
+      allowedElements={safeElements}
       unwrapDisallowed
       skipHtml
       urlTransform={safeMarkdownUrl}
       components={components}
     >
-      {compact ? compactMarkdown(content) : content}
+      {content}
     </ReactMarkdown>
   );
 
-  return compact ? markdown : <div className="markdown-content">{markdown}</div>;
+  return (
+    <div className={compact ? "markdown-compact" : "markdown-content"}>
+      {markdown}
+    </div>
+  );
 }
