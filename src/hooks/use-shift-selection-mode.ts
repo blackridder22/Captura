@@ -14,6 +14,7 @@ export function useShiftSelectionMode() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Shift" && !isEditableTarget(event.target)) {
+        window.getSelection()?.removeAllRanges();
         setShiftHeld(true);
       }
     };

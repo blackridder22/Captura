@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useShiftSelectionMode } from "./use-shift-selection-mode";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +26,7 @@ describe("useShiftSelectionMode", () => {
   });
 
   it("enters on Shift key-down and exits on key-up", () => {
+    const removeAllRanges = vi.spyOn(window.getSelection()!, "removeAllRanges");
     expect(container.textContent).toBe("idle");
     act(() =>
       window.dispatchEvent(
@@ -33,6 +34,7 @@ describe("useShiftSelectionMode", () => {
       ),
     );
     expect(container.textContent).toBe("selecting");
+    expect(removeAllRanges).toHaveBeenCalledOnce();
 
     act(() =>
       window.dispatchEvent(

@@ -62,7 +62,8 @@ export default function App() {
   const {
     selectedId,
     selectedIds,
-    selectedItems,
+    actionIds,
+    actionItems,
     seedIfEmpty,
     setSingle,
     clear: clearSelection,
@@ -157,8 +158,8 @@ export default function App() {
     removeItems,
     applyUpdatedItems,
     prependReplacing,
-    selectedIds,
-    selectedItems,
+    selectedIds: actionIds,
+    selectedItems: actionItems,
     setSingle,
     clearSelection,
     setContextMenu,
@@ -196,8 +197,8 @@ export default function App() {
     setEditingItem,
     searchRef,
     selectedId,
-    selectedIds,
-    selectedItems,
+    selectedIds: actionIds,
+    selectedItems: actionItems,
     moveBy,
     copySelected,
     mergeSelected,
@@ -298,7 +299,7 @@ export default function App() {
               <QueueItem
                 key={item.id}
                 item={item}
-                selected={item.id === selectedId}
+                selected={item.id === selectedId && !shiftSelectionMode}
                 multiSelected={selectedIds.includes(item.id)}
                 selectionMode={shiftSelectionMode}
                 sectionName={
@@ -306,8 +307,11 @@ export default function App() {
                 }
                 onSelect={(event) =>
                   selectWith(item.id, {
-                    toggle: event.metaKey || event.ctrlKey,
-                    range: event.shiftKey,
+                    toggle:
+                      shiftSelectionMode ||
+                      event.shiftKey ||
+                      event.metaKey ||
+                      event.ctrlKey,
                   })
                 }
                 onContextMenu={(event) => {
@@ -323,7 +327,7 @@ export default function App() {
                 }}
                 onToggle={() => void handleToggle(item.id)}
                 onSelectionControl={() =>
-                  selectWith(item.id, { toggle: false, range: true })
+                  selectWith(item.id, { toggle: true })
                 }
                 onEdit={() => setEditingItem(item)}
                 onDelete={() => void handleDelete(item.id)}
@@ -357,7 +361,7 @@ export default function App() {
             <span className="selection-mode-status" role="status">
               <ListChecks size={12} />
               <strong>Selection mode</strong>
-              <small>click a row or circle</small>
+              <small>click items individually</small>
             </span>
           ) : (
             <>
@@ -394,22 +398,22 @@ export default function App() {
         <QueueContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={selectedItems}
+          items={actionItems}
           sections={sections}
           shortcuts={appSettings.shortcuts}
           onCopy={() => void copySelected(false)}
           onCopyAsList={() => void copySelected(true)}
           onPaste={() => {
-            if (selectedItems[0]) void handlePaste(selectedItems[0].id);
+            if (actionItems[0]) void handlePaste(actionItems[0].id);
             setContextMenu(null);
           }}
           onDone={() => void markSelectedDone()}
           onExpand={() => {
-            setPreviewItems(selectedItems);
+            setPreviewItems(actionItems);
             setContextMenu(null);
           }}
           onEdit={() => {
-            if (selectedItems[0]) setEditingItem(selectedItems[0]);
+            if (actionItems[0]) setEditingItem(actionItems[0]);
             setContextMenu(null);
           }}
           onMerge={() => void mergeSelected()}

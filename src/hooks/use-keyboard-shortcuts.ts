@@ -16,7 +16,7 @@ type KeyboardShortcutDeps = {
   selectedId: string | null;
   selectedIds: string[];
   selectedItems: CaptureItem[];
-  moveBy: (direction: 1 | -1, extend: boolean) => void;
+  moveBy: (direction: 1 | -1, preserveSelection: boolean) => void;
   copySelected: (asList: boolean) => Promise<void>;
   mergeSelected: () => Promise<void>;
   markSelectedDone: () => Promise<void>;

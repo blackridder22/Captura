@@ -63,7 +63,25 @@ describe("QueueStateControl", () => {
     expect(button.dataset.mode).toBe("selection");
     expect(button.dataset.selected).toBe("true");
     expect(button.getAttribute("aria-pressed")).toBe("true");
-    expect(button.getAttribute("aria-label")).toBe("Capture selected");
+    expect(button.getAttribute("aria-label")).toBe("Deselect capture");
     expect(container.querySelector(".queue-state-selection svg")).not.toBeNull();
+  });
+
+  it("describes an unselected control as an individual toggle", async () => {
+    await act(async () => {
+      root.render(
+        <QueueStateControl
+          done={false}
+          selected={false}
+          selectionMode
+          onSelect={vi.fn()}
+          onToggleDone={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector("button")?.getAttribute("aria-label")).toBe(
+      "Select capture",
+    );
   });
 });

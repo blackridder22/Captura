@@ -27,8 +27,8 @@ export function QueueStateControl({
       aria-label={
         selectionMode
           ? selected
-            ? "Capture selected"
-            : "Select through this capture"
+            ? "Deselect capture"
+            : "Select capture"
           : done
             ? "Mark capture open"
             : "Mark capture done"
