@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import {
   createItem,
   createSection,
@@ -17,8 +17,7 @@ import type {
 } from "../types";
 import type { ToastTone } from "./use-notify";
 
-/// Single-item and composer actions. Stateless orchestration over the
-/// owning hooks: every piece of state it touches is received, never owned.
+/// Single-item and composer actions. UI state belongs to the owning hooks.
 type ItemActionDeps = {
   prependItem: (item: CaptureItem) => void;
   prependDeduped: (item: CaptureItem) => void;
@@ -64,33 +63,54 @@ export function useItemActions({
   setComposer,
   focusComposer,
 }: ItemActionDeps) {
+  const saveInFlight = useRef(false);
+
   const handleCreate = useCallback(async () => {
-    const content = composer.trim();
-    if (!content || saving) return;
+    const content = composer;
+    if (!content.trim() || saving || saveInFlight.current) return;
+    saveInFlight.current = true;
     setSaving(true);
-    const item = await createItem({ content, kind: composerKind });
-    const created =
-      sectionFilter !== "all" && sectionFilter !== "unfiled"
-        ? (await moveItemsToSection([item.id], sectionFilter))[0] ?? item
-        : item;
-    prependItem(created);
-    setSingle(created.id);
-    setFilter("inbox");
-    setComposer("");
-    setSaving(false);
-    announce("Capture saved");
-    focusComposer();
+    try {
+      let created = await createItem({ content, kind: composerKind });
+      let sectionMoveFailed = false;
+      if (sectionFilter !== "all" && sectionFilter !== "unfiled") {
+        try {
+          created = (await moveItemsToSection([created.id], sectionFilter))[0] ?? created;
+        } catch {
+          // Creation already persisted. Keep it visible instead of inviting a duplicate save.
+          sectionMoveFailed = true;
+        }
+      }
+      prependItem(created);
+      setSingle(created.id);
+      setFilter("inbox");
+      setComposer("");
+      if (sectionMoveFailed) {
+        setSectionFilter("unfiled");
+        notify("Capture saved to Unfiled. Could not add it to this section.", "error");
+      } else {
+        announce("Capture saved");
+      }
+    } catch {
+      notify("Could not save capture. Your draft is still here. Try again.", "error");
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
+      focusComposer();
+    }
   }, [
     announce,
     composer,
     composerKind,
     focusComposer,
+    notify,
     prependItem,
     saving,
     sectionFilter,
     setComposer,
     setFilter,
     setSaving,
+    setSectionFilter,
     setSingle,
   ]);
 
