@@ -363,7 +363,9 @@ fn magic_format(bytes: &[u8]) -> Option<Format> {
     if bytes.len() >= 16 && &bytes[4..8] == b"ftyp" {
         let box_size = u32::from_be_bytes(bytes[..4].try_into().ok()?) as usize;
         if box_size >= 16 && box_size <= bytes.len() {
-            let brands = std::iter::once(&bytes[8..12]).chain(bytes[16..box_size].chunks_exact(4));
+            let (compatible_brands, _) = bytes[16..box_size].as_chunks::<4>();
+            let brands = std::iter::once(&bytes[8..12])
+                .chain(compatible_brands.iter().map(|brand| brand.as_slice()));
             if brands.into_iter().any(|brand| {
                 matches!(
                     brand,
