@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101112" />
+    <meta name="description" content="Keep the thought. Keep your focus. Captura is a local-first Mac app for saving answers, links, notes, and your next prompt, then pasting them back where you work." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Captura · Keep the thought. Keep your focus." />
+    <meta property="og:description" content="A little space in your menu bar for the answers, links, and prompts you want to keep." />
+    <meta property="og:url" content="https://blackridder22.github.io/Captura/" />
+    <meta property="og:image" content="https://blackridder22.github.io/Captura/assets/captura-icon.png" />
+    <meta property="og:image:alt" content="Captura app icon" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="canonical" href="https://blackridder22.github.io/Captura/" />
+    <title>Captura · Keep the thought. Keep your focus.</title>
+    <link rel="icon" href="assets/captura-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="captura-mark" viewBox="0 0 24 24"><path d="M17.6 4.8a8.2 8.2 0 1 0 0 14.4" stroke-width="2.2"/><path d="M15.2 7.8h3.4v3.4" stroke-width="1.7"/></symbol>
+        <symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path d="M7 7h10v10"></path><path d="M7 17 17 7"></path></symbol>
+<symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></symbol>
+<symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 15V3"></path><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="m7 10 5 5 5-5"></path></symbol>
+<symbol id="icon-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3"></polygon></symbol>
+<symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 12h16"></path><path d="M4 18h16"></path><path d="M4 6h16"></path></symbol>
+<symbol id="icon-x" viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></symbol>
+<symbol id="icon-plus" viewBox="0 0 24 24"><path d="M5 12h14"></path><path d="M12 5v14"></path></symbol>
+<symbol id="icon-minus" viewBox="0 0 24 24"><path d="M5 12h14"></path></symbol>
+<symbol id="icon-lock" viewBox="0 0 24 24"><circle cx="12" cy="16" r="1"></circle><rect x="3" y="10" width="18" height="12" rx="2"></rect><path d="M7 10V7a5 5 0 0 1 10 0v3"></path></symbol>
+<symbol id="icon-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></symbol>
+<symbol id="icon-keyboard" viewBox="0 0 24 24"><path d="M10 8h.01"></path><path d="M12 12h.01"></path><path d="M14 8h.01"></path><path d="M16 12h.01"></path><path d="M18 8h.01"></path><path d="M6 8h.01"></path><path d="M7 16h10"></path><path d="M8 12h.01"></path><rect width="20" height="16" x="2" y="4" rx="2"></rect></symbol>
+<symbol id="icon-command" viewBox="0 0 24 24"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"></path></symbol>
+<symbol id="icon-enter" viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4"></path><path d="m9 10-5 5 5 5"></path></symbol>
+<symbol id="icon-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></symbol>
+<symbol id="icon-check-check" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5"></path><path d="m22 10-7.5 7.5L13 16"></path></symbol>
+<symbol id="icon-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></symbol>
+<symbol id="icon-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></symbol>
+<symbol id="icon-prompt" viewBox="0 0 24 24"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path><path d="M20 3v4"></path><path d="M22 5h-4"></path><path d="M4 17v2"></path><path d="M5 18H3"></path></symbol>
+<symbol id="icon-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></symbol>
+<symbol id="icon-note" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M10 9H8"></path><path d="M16 13H8"></path><path d="M16 17H8"></path></symbol>
+<symbol id="icon-clipboard" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"></rect><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path></symbol>
+<symbol id="icon-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"></path><circle cx="11" cy="11" r="8"></circle></symbol>
+<symbol id="icon-pointer" viewBox="0 0 24 24"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"></path></symbol>
+<symbol id="icon-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></symbol>
+<symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></symbol>
+
+      </defs>
+    </svg>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="header-inner container">
+        <a class="brand" href="#" aria-label="Captura home">
+          <span class="brand-icon"><svg class="icon"><use href="#captura-mark"/></svg></span>
+          <span>Captura</span>
+        </a>
+        <nav class="desktop-nav" aria-label="Main navigation">
+          <a href="#how-it-works">How it works</a>
+          <a href="#made-for-mac">Made for Mac</a>
+          <a href="#questions">Questions</a>
+        </nav>
+        <a class="button button-small button-outline header-download" href="https://github.com/blackridder22/Captura/releases/latest" data-download>Get Captura <svg class="icon"><use href="#icon-arrow-up-right"/></svg></a>
+        <button class="menu-toggle icon-button" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-nav"><svg class="icon"><use href="#icon-menu"/></svg></button>
+      </div>
+      <nav class="mobile-nav container" id="mobile-nav" aria-label="Mobile navigation" hidden>
+        <a href="#how-it-works">How it works</a>
+        <a href="#made-for-mac">Made for Mac</a>
+        <a href="#questions">Questions</a>
+        <a href="https://github.com/blackridder22/Captura/releases/latest" data-download>Get Captura for Mac <svg class="icon"><use href="#icon-arrow-up-right"/></svg></a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero container" aria-labelledby="hero-heading">
+        <div class="hero-copy">
+          <p class="eyebrow"><svg class="icon"><use href="#icon-command"/></svg> A little space for your next thought</p>
+          <h1 id="hero-heading"><span>Keep the thought.</span><span class="accent-text">Keep your focus.</span></h1>
+          <p class="hero-description">Save answers, links, and your next prompt. Paste them back when you’re ready, without losing your place.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/blackridder22/Captura/releases/latest" data-download><svg class="icon"><use href="#icon-download"/></svg> Get Captura for Mac</a>
+            <a class="text-link" href="#how-it-works"><svg class="icon play-icon"><use href="#icon-play"/></svg> See how it works</a>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="product-stage">
+            <img class="product-screenshot" src="assets/captura-panel.png" alt="Captura’s Mac panel with a quick capture field, prompts, notes, links, and a paste-back action." width="406" height="626" fetchpriority="high" />
+          </div>
+          <div class="hero-shortcut" role="img" aria-label="Option plus Space to capture"><kbd class="physical-key option-key"><span>⌥</span><small>option</small></kbd><kbd class="physical-key space-key"><span>space</span><i></i></kbd></div>
+        </div>
+      </section>
+
+      <div class="compatibility container" role="group" aria-label="Made for your everyday workflow">
+        <p>For the way you already work.</p>
+        <div class="compatibility-apps"><span>ChatGPT</span><span>Claude</span><span>Cursor</span><span>Chrome</span><span class="and-more">and the rest of your Mac</span></div>
+      </div>
+
+      <section class="problem-section container" aria-labelledby="problem-heading">
+        <div class="problem-intro">
+          <h2 id="problem-heading">Your next idea shouldn’t<br />interrupt this one.</h2>
+          <p>You’re in the middle of something. An answer worth keeping. A link for later. A better question to ask next.</p>
+          <p>Give it a place to land. Then get right back to work.</p>
+        </div>
+        <div class="thoughts" role="group" aria-label="Things worth capturing">
+          <div class="thought thought-prompt"><svg class="icon"><use href="#icon-prompt"/></svg><span>“Try this with a simpler example.”</span><span class="thought-kind">Prompt</span></div>
+          <div class="thought thought-note"><svg class="icon"><use href="#icon-note"/></svg><span>That one sentence worth keeping.</span><span class="thought-kind">Note</span></div>
+          <div class="thought thought-link"><svg class="icon"><use href="#icon-link"/></svg><span>The reference you’ll need tomorrow.</span><span class="thought-kind">Link</span></div>
+        </div>
+      </section>
+
+      <section class="workflow-section container" id="how-it-works" aria-labelledby="workflow-heading">
+        <div class="section-heading">
+          <p class="eyebrow">One small habit. A clearer head.</p>
+          <h2 id="workflow-heading">Capture. Keep moving.</h2>
+          <p>From “I’ll need this” to right where you need it.</p>
+        </div>
+        <div class="workflow-layout">
+          <div class="workflow-steps" role="group" aria-label="Capture workflow">
+            <button class="workflow-step is-active" data-step="capture" aria-pressed="true" aria-controls="demo-workspace">
+              <span class="step-symbol"><svg class="icon"><use href="#icon-keyboard"/></svg></span>
+              <span class="step-copy"><strong>Catch the useful bit.</strong><span>Select text in the app you’re using. Press <kbd>⌥ Space</kbd> to capture it.</span></span>
+              <svg class="icon step-arrow"><use href="#icon-arrow-right"/></svg>
+            </button>
+            <button class="workflow-step" data-step="queue" aria-pressed="false" aria-controls="demo-workspace">
+              <span class="step-symbol"><svg class="icon"><use href="#icon-inbox"/></svg></span>
+              <span class="step-copy"><strong>Make room for what’s next.</strong><span>Keep prompts, notes, and links in one searchable queue. Check them off as you go.</span></span>
+              <svg class="icon step-arrow"><use href="#icon-arrow-right"/></svg>
+            </button>
+            <button class="workflow-step" data-step="paste" aria-pressed="false" aria-controls="demo-workspace">
+              <span class="step-symbol"><svg class="icon"><use href="#icon-enter"/></svg></span>
+              <span class="step-copy"><strong>Put it back to work.</strong><span>Press <kbd>⌘ Enter</kbd> to paste a capture into the app you were just using.</span></span>
+              <svg class="icon step-arrow"><use href="#icon-arrow-right"/></svg>
+            </button>
+          </div>
+          <div class="demo-workspace" id="demo-workspace">
+            <div class="demo-toolbar"><span><svg class="icon"><use href="#captura-mark"/></svg> Try the workflow</span><button class="icon-button" id="demo-reset" aria-label="Reset demo" title="Reset demo"><svg class="icon"><use href="#icon-reset"/></svg></button></div>
+            <div class="demo-body">
+              <div class="demo-screen" id="demo-capture">
+                <div class="demo-context"><svg class="icon"><use href="#icon-prompt"/></svg> A thought worth keeping</div>
+                <label class="sr-only" for="demo-thought">Your thought to capture</label>
+                <textarea id="demo-thought" maxlength="220" spellcheck="false">Turn this answer into a clear action plan.</textarea>
+                <div class="demo-capture-footer"><span>Edit it. Make it yours.</span><button class="button button-primary button-small" id="capture-button">Capture <kbd>⌥ Space</kbd></button></div>
+              </div>
+              <div class="demo-screen" id="demo-queue" hidden>
+                <div class="demo-context"><svg class="icon"><use href="#icon-inbox"/></svg> Your queue <span class="queue-count" id="demo-count">1 capture</span></div>
+                <div class="demo-queue-item"><span class="queue-indicator"></span><div><span class="demo-kind">Prompt</span><p id="queued-thought">Turn this answer into a clear action plan.</p></div><svg class="icon"><use href="#icon-check"/></svg></div>
+                <p class="demo-queue-hint">Ready when you are. No need to keep it in your head.</p>
+                <button class="button button-primary button-small" id="paste-button">Paste back <kbd>⌘ Enter</kbd></button>
+              </div>
+              <div class="demo-screen" id="demo-paste" hidden>
+                <div class="demo-context"><svg class="icon"><use href="#icon-enter"/></svg> Back in your writing</div>
+                <label class="sr-only" for="demo-destination">Demo destination for your pasted thought</label>
+                <textarea id="demo-destination" readonly></textarea>
+                <div class="demo-paste-footer"><span><svg class="icon"><use href="#icon-check-check"/></svg> Right where you need it.</span><button class="text-link" id="try-again">Try again <svg class="icon"><use href="#icon-reset"/></svg></button></div>
+              </div>
+            </div>
+            <div class="demo-bottom"><svg class="icon"><use href="#icon-pointer"/></svg><span>Interactive preview. Your real apps stay untouched.</span></div>
+            <p class="sr-only" id="demo-announcement" role="status" aria-live="polite"></p>
+          </div>
+        </div>
+        <noscript><p class="noscript-note">The interactive preview needs JavaScript. In Captura, select text and press Option + Space to capture, then Command + Enter to paste back.</p></noscript>
+      </section>
+
+      <section class="mac-section container" id="made-for-mac" aria-labelledby="mac-heading">
+        <div class="mac-visual" aria-hidden="true">
+          <div class="shortcut-illustration"><kbd class="physical-key option-key"><span>⌥</span><small>option</small></kbd><kbd class="physical-key space-key"><span>space</span><i></i></kbd></div>
+          <div class="shortcut-caption"><span>One shortcut away.</span><span>Out of your way.</span></div>
+        </div>
+        <div class="mac-copy">
+          <h2 id="mac-heading">Feels at home.<br />Stays out of the way.</h2>
+          <p>A small space in your menu bar, ready over the app you’re using. Even in full screen.</p>
+          <dl class="mac-features">
+            <div><dt><svg class="icon"><use href="#icon-keyboard"/></svg> Your keyboard. Your rules.</dt><dd>Capture, search, and paste without reaching for the mouse. Change any shortcut to fit your habits.</dd></div>
+            <div><dt><svg class="icon"><use href="#icon-clipboard"/></svg> Your clipboard, preserved.</dt><dd>Paste a capture back into your work without losing what you had copied before.</dd></div>
+            <div><dt><svg class="icon"><use href="#icon-note"/></svg> A queue you can actually use.</dt><dd>Find a note, group a few prompts, merge ideas, or copy a list. Keep what matters moving.</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="privacy-section" id="privacy" aria-labelledby="privacy-heading">
+        <div class="privacy-inner container">
+          <div class="privacy-symbol" aria-hidden="true"><svg class="icon"><use href="#icon-lock"/></svg></div>
+          <h2 id="privacy-heading">Your thoughts have a home.<br /><span class="accent-text">Your Mac.</span></h2>
+          <p>Your captures are stored locally on your Mac.<br />No account to create. No cloud to manage. No analytics.</p>
+          <a class="text-link" href="#privacy-question" data-open-faq="privacy-question">A little more about privacy <svg class="icon"><use href="#icon-arrow-right"/></svg></a>
+        </div>
+      </section>
+
+      <section class="faq-section container" id="questions" aria-labelledby="faq-heading">
+        <div class="faq-heading"><h2 id="faq-heading">A few good <br />questions.</h2><p>The small things, <br />before you get started.</p></div>
+        <div class="faq-list">
+          <details><summary>How is this different from a clipboard manager?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>Captura is a queue for things you choose to keep. Save a useful answer, write your next prompt, or collect a link. Search, organize, paste back, and mark things done as you work.</p></div></details>
+          <details><summary>Does Captura work with my AI apps?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>Captura works with text selection and copy and paste on your Mac. Use it alongside ChatGPT, Claude, Cursor, your browser, and other apps. It doesn’t need an AI account connection or a browser extension.</p><p>Selection support depends on the source app. You can copy text first and use Captura’s clipboard fallback.</p></div></details>
+          <details id="privacy-question"><summary>Do my captures ever leave my Mac?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>Captura stores your captures in a local database. It has no account system, analytics, or capture sync. The app contacts GitHub to check for software updates; it doesn’t upload your captures.</p><p>When you choose to paste into another app, that app’s own data practices apply. Captura doesn’t change how ChatGPT, Claude, or other services handle what you send them.</p></div></details>
+          <details><summary>Why does it need Accessibility access?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>macOS requires Accessibility permission so Captura can read selected text and perform copy and paste when you ask it to. You can review or revoke this permission in System Settings → Privacy &amp; Security → Accessibility.</p></div></details>
+          <details><summary>What do I need to run it?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>The current downloadable build is for Apple Silicon Macs running macOS 13 or later. Download the DMG from the release page and drag Captura into Applications.</p><p>The public build is development-signed and isn’t Apple-notarized. Read the first-launch instructions on the <a href="https://github.com/blackridder22/Captura/releases/latest">release page</a>, and grant Accessibility permission for selection capture and paste-back.</p></div></details>
+          <details><summary>Can I change the keyboard shortcuts?<svg class="icon"><use href="#icon-plus"/></svg></summary><div class="faq-answer"><p>Yes. Option + Space is the default for capture, and Command + Enter pastes back. Every shortcut can be changed in Captura’s Settings to fit how you work.</p></div></details>
+        </div>
+      </section>
+
+      <section class="closing-section container" id="get-captura" aria-labelledby="closing-heading">
+        <img src="assets/captura-icon.png" width="88" height="88" alt="" loading="lazy" />
+        <h2 id="closing-heading">Keep the good bits.<br /><span class="accent-text">Get back to your work.</span></h2>
+        <p>Your next thought already has a place.</p>
+        <a class="button button-primary" href="https://github.com/blackridder22/Captura/releases/latest" data-download><svg class="icon"><use href="#icon-download"/></svg> Get Captura for Mac</a>
+        <span class="download-detail">macOS 13+ <span aria-hidden="true">·</span> Apple Silicon</span>
+      </section>
+    </main>
+
+    <footer class="site-footer container">
+      <a class="brand footer-brand" href="#" aria-label="Captura home"><svg class="icon"><use href="#captura-mark"/></svg><span>Captura</span></a>
+      <p>Capture now. Keep moving.</p>
+      <nav aria-label="Footer navigation"><a href="#privacy-question" data-open-faq="privacy-question">Privacy</a><a href="https://github.com/blackridder22/Captura/issues">Support <svg class="icon"><use href="#icon-arrow-up-right"/></svg></a><a href="https://github.com/blackridder22/Captura">GitHub <svg class="icon"><use href="#icon-arrow-up-right"/></svg></a></nav>
+    </footer>
+  </body>
+</html>
