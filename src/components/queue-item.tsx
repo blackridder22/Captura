@@ -7,10 +7,10 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useMemo, type MouseEvent } from "react";
 import type { CaptureItem } from "../types";
 import { attachmentUrl } from "../lib/api";
-import { formatCaptureTime } from "../lib/items";
+import { formatCaptureTime, markdownExcerpt } from "../lib/items";
 import { shortcutLabel } from "../lib/shortcuts";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
@@ -28,6 +28,7 @@ type QueueItemProps = {
   onToggle: () => void;
   onSelectionControl: (event: MouseEvent<HTMLButtonElement>) => void;
   onEdit: () => void;
+  onPreview: () => void;
   onDelete: () => void;
   onCopy: () => Promise<void>;
   onPaste: () => void;
@@ -64,12 +65,14 @@ export function QueueItem({
   onToggle,
   onSelectionControl,
   onEdit,
+  onPreview,
   onDelete,
   onCopy,
   onPaste,
   pasteShortcut,
 }: QueueItemProps) {
   const done = item.status === "done";
+  const excerpt = useMemo(() => markdownExcerpt(item.content), [item.content]);
 
   return (
     <article
@@ -84,7 +87,7 @@ export function QueueItem({
       }}
       onContextMenu={onContextMenu}
       onDoubleClick={(event) => {
-        if (!selectionMode && !event.shiftKey) onEdit();
+        if (!selectionMode && !event.shiftKey && !(event.target as HTMLElement).closest("button, a")) onPreview();
       }}
       role="option"
       aria-selected={multiSelected}
@@ -109,7 +112,7 @@ export function QueueItem({
           </figure>
         ) : (
           <div className="item-markdown" data-link={item.kind === "link"}>
-            <MarkdownText content={item.content} compact />
+            <MarkdownText content={excerpt} compact />
           </div>
         )}
         <div className="item-meta">

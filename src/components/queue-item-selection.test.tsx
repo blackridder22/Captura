@@ -49,6 +49,7 @@ describe("QueueItem Shift selection", () => {
           onToggle={onToggle}
           onSelectionControl={onSelectionControl}
           onEdit={vi.fn()}
+          onPreview={vi.fn()}
           onDelete={vi.fn()}
           onCopy={vi.fn(async () => undefined)}
           onPaste={vi.fn()}

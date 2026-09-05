@@ -1,5 +1,8 @@
 mod database;
+mod detail;
 mod platform;
+#[cfg(target_os = "macos")]
+mod qa;
 #[cfg(target_os = "macos")]
 mod smoke;
 
@@ -138,6 +141,8 @@ struct AppSettings {
 
 struct AppState {
     database: Database,
+    changes: Mutex<u64>,
+    detail_request: Mutex<Option<detail::DetailRequest>>,
     previous_application: Mutex<Option<ActiveApplication>>,
     shortcuts: Mutex<KeyboardShortcuts>,
     shortcut_registered: AtomicBool,
@@ -174,6 +179,8 @@ impl AppState {
         let accessibility_setup_seen = load_accessibility_setup_seen(&database, database_existed)?;
         Ok(Self {
             database,
+            changes: Mutex::new(0),
+            detail_request: Mutex::new(None),
             previous_application: Mutex::new(None),
             shortcuts: Mutex::new(shortcuts),
             shortcut_registered: AtomicBool::new(false),
@@ -183,6 +190,83 @@ impl AppState {
             accessibility_setup_seen: AtomicBool::new(accessibility_setup_seen),
         })
     }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureChanges {
+    revision: u64,
+    upserts: Vec<CaptureItem>,
+    deleted_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QueueSnapshot {
+    revision: u64,
+    items: Vec<CaptureItem>,
+    sections: Vec<Section>,
+    settings: AppSettings,
+}
+
+// A snapshot and each write/publication share one ordering lock. Events may
+// arrive before IPC replies; the revision lets each webview reject stale data.
+fn mutate_items<T>(
+    app: &AppHandle,
+    state: &AppState,
+    action: impl FnOnce(&Database) -> Result<(T, Vec<CaptureItem>, Vec<String>), String>,
+) -> Result<T, String> {
+    let mut revision = state
+        .changes
+        .lock()
+        .map_err(|_| "Capture state unavailable")?;
+    let (result, upserts, deleted_ids) = action(&state.database)?;
+    *revision += 1;
+    let _ = app.emit(
+        "captura://captures-changed",
+        CaptureChanges {
+            revision: *revision,
+            upserts,
+            deleted_ids,
+        },
+    );
+    Ok(result)
+}
+
+fn mutate_one(
+    app: &AppHandle,
+    state: &AppState,
+    action: impl FnOnce(&Database) -> Result<CaptureItem, DatabaseError>,
+) -> Result<CaptureItem, String> {
+    mutate_items(app, state, |database| {
+        let item = action(database).map_err(|error| error.to_string())?;
+        Ok((item.clone(), vec![item], vec![]))
+    })
+}
+
+#[tauri::command]
+async fn snapshot_queue(app: AppHandle) -> Result<QueueSnapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let revision = state
+            .changes
+            .lock()
+            .map_err(|_| "Capture state unavailable")?;
+        Ok(QueueSnapshot {
+            revision: *revision,
+            items: state
+                .database
+                .list_items()
+                .map_err(|error| error.to_string())?,
+            sections: state
+                .database
+                .list_sections()
+                .map_err(|error| error.to_string())?,
+            settings: current_app_settings(&state)?,
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn load_accessibility_setup_seen(
@@ -275,6 +359,15 @@ struct PermissionRequiredEvent {
 }
 
 fn database_path() -> Result<PathBuf, String> {
+    if std::env::var("CAPTURA_TEST_MODE").as_deref() == Ok("1") {
+        let directory = PathBuf::from(
+            std::env::var("CAPTURA_DATA_DIR").map_err(|_| "Test mode requires CAPTURA_DATA_DIR")?,
+        );
+        if !directory.is_absolute() {
+            return Err("Test data directory must be absolute".into());
+        }
+        return Ok(directory.join("captura.db"));
+    }
     let directories = ProjectDirs::from("com", "Auto Scale Agency", "Captura")
         .ok_or_else(|| "could not resolve Captura's application data directory".to_string())?;
     Ok(directories.data_dir().join("captura.db"))
@@ -409,53 +502,55 @@ fn list_items(state: State<'_, AppState>) -> Result<Vec<CaptureItem>, String> {
 
 #[tauri::command]
 fn create_item(
+    app: AppHandle,
     state: State<'_, AppState>,
     content: String,
     kind: ItemKind,
     source_app: Option<String>,
 ) -> Result<CaptureItem, String> {
-    state
-        .database
-        .create_item(&content, kind, source_app.as_deref(), None, None)
-        .map_err(|error| error.to_string())
+    mutate_one(&app, &state, |database| {
+        database.create_item(&content, kind, source_app.as_deref(), None, None)
+    })
 }
 
 #[tauri::command]
 fn update_item(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     content: String,
     kind: ItemKind,
+    expected_updated_at: Option<String>,
 ) -> Result<CaptureItem, String> {
-    state
-        .database
-        .update_item(&id, &content, kind)
-        .map_err(|error| error.to_string())
+    mutate_one(&app, &state, |database| {
+        database.update_item_if_current(&id, &content, kind, expected_updated_at.as_deref())
+    })
 }
 
 #[tauri::command]
-fn toggle_item(state: State<'_, AppState>, id: String) -> Result<CaptureItem, String> {
-    state
-        .database
-        .toggle_item(&id)
-        .map_err(|error| error.to_string())
+fn toggle_item(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<CaptureItem, String> {
+    mutate_one(&app, &state, |database| database.toggle_item(&id))
 }
 
 #[tauri::command]
-fn delete_item(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let attachment = state
-        .database
-        .get_item(&id)
-        .ok()
-        .and_then(|item| item.attachment_path);
-    state
-        .database
-        .delete_item(&id)
-        .map_err(|error| error.to_string())?;
-    if let Some(path) = attachment {
-        let _ = std::fs::remove_file(path);
-    }
-    Ok(())
+fn delete_item(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    mutate_items(&app, &state, |database| {
+        let attachment = database
+            .get_item(&id)
+            .ok()
+            .and_then(|item| item.attachment_path);
+        database
+            .delete_item(&id)
+            .map_err(|error| error.to_string())?;
+        if let Some(path) = attachment {
+            let _ = std::fs::remove_file(path);
+        }
+        Ok(((), vec![], vec![id]))
+    })
 }
 
 #[tauri::command]
@@ -513,7 +608,7 @@ fn import_image_files(
             .map(|stem| stem.to_string_lossy().to_string())
             .filter(|stem| !stem.trim().is_empty())
             .unwrap_or_else(|| "Image".to_string());
-        let item = create_image_capture(&state, &png, &label, None, None)?;
+        let item = create_image_capture(&app, &state, &png, &label, None, None)?;
         let _ = app.emit("captura://captured", &item);
         imported.push(item);
     }
@@ -532,40 +627,60 @@ fn list_sections(state: State<'_, AppState>) -> Result<Vec<Section>, String> {
 }
 
 #[tauri::command]
-fn create_section(state: State<'_, AppState>, name: String) -> Result<Section, String> {
-    state
-        .database
-        .create_section(&name)
-        .map_err(|error| error.to_string())
+fn create_section(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Section, String> {
+    mutate_items(&app, &state, |database| {
+        let section = database
+            .create_section(&name)
+            .map_err(|error| error.to_string())?;
+        Ok((section, vec![], vec![]))
+    })
 }
 
 #[tauri::command]
-fn delete_section(state: State<'_, AppState>, id: String) -> Result<Vec<CaptureItem>, String> {
-    match state.database.delete_section(&id) {
-        Ok(items) => Ok(items),
-        Err(DatabaseError::NotFound) => Err("Section not found.".to_string()),
-        Err(error) => Err(error.to_string()),
-    }
+fn delete_section(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<CaptureItem>, String> {
+    mutate_items(&app, &state, |database| {
+        let items = database
+            .delete_section(&id)
+            .map_err(|error| error.to_string())?;
+        Ok((items.clone(), items, vec![]))
+    })
 }
 
 #[tauri::command]
 fn move_items_to_section(
+    app: AppHandle,
     state: State<'_, AppState>,
     ids: Vec<String>,
     section_id: Option<String>,
 ) -> Result<Vec<CaptureItem>, String> {
-    state
-        .database
-        .move_items_to_section(&ids, section_id.as_deref())
-        .map_err(|error| error.to_string())
+    mutate_items(&app, &state, |database| {
+        let items = database
+            .move_items_to_section(&ids, section_id.as_deref())
+            .map_err(|error| error.to_string())?;
+        Ok((items.clone(), items, vec![]))
+    })
 }
 
 #[tauri::command]
-fn merge_items(state: State<'_, AppState>, ids: Vec<String>) -> Result<CaptureItem, String> {
-    state
-        .database
-        .merge_items(&ids)
-        .map_err(|error| error.to_string())
+fn merge_items(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<CaptureItem, String> {
+    mutate_items(&app, &state, |database| {
+        let item = database
+            .merge_items(&ids)
+            .map_err(|error| error.to_string())?;
+        Ok((item.clone(), vec![item], ids))
+    })
 }
 
 #[tauri::command]
@@ -610,10 +725,9 @@ async fn paste_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
                 macos::paste_image(&png, &target).map_err(|error| error.to_string())?;
             }
         }
-        state
-            .database
-            .set_status(&id, ItemStatus::Done)
-            .map_err(|error| error.to_string())
+        mutate_one(&app, &state, |database| {
+            database.set_status(&id, ItemStatus::Done)
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -922,17 +1036,17 @@ fn handle_global_capture(app: AppHandle) {
                 .as_ref()
                 .and_then(|application| application.bundle_id.as_deref());
             let result = match selection {
-                CapturedSelection::Text(content) => state
-                    .database
-                    .create_item(
+                CapturedSelection::Text(content) => mutate_one(&app, &state, |database| {
+                    database.create_item(
                         &content,
                         infer_kind(&content),
                         source_app,
                         source_bundle_id,
                         None,
                     )
-                    .map_err(|error| error.to_string()),
+                }),
                 CapturedSelection::Image(png) => create_image_capture(
+                    &app,
                     &state,
                     &png,
                     "Image capture",
@@ -954,6 +1068,7 @@ fn handle_global_capture(app: AppHandle) {
                 Some(png) => {
                     let state = app.state::<AppState>();
                     let result = create_image_capture(
+                        &app,
                         &state,
                         &png,
                         "Image capture",
@@ -1004,20 +1119,24 @@ fn capture_clipboard(app: &AppHandle) {
         .and_then(|application| application.bundle_id.as_deref());
 
     let result = match macos::clipboard_text().filter(|text| !text.trim().is_empty()) {
-        Some(content) => state
-            .database
-            .create_item(
+        Some(content) => mutate_one(app, &state, |database| {
+            database.create_item(
                 &content,
                 infer_kind(&content),
                 source_app,
                 source_bundle_id,
                 None,
             )
-            .map_err(|error| error.to_string()),
+        }),
         None => match macos::clipboard_image_png() {
-            Some(png) => {
-                create_image_capture(&state, &png, "Image capture", source_app, source_bundle_id)
-            }
+            Some(png) => create_image_capture(
+                app,
+                &state,
+                &png,
+                "Image capture",
+                source_app,
+                source_bundle_id,
+            ),
             None => {
                 present_main_window(app, true);
                 return;
@@ -1042,6 +1161,7 @@ fn attachments_dir() -> Result<PathBuf, String> {
 }
 
 fn create_image_capture(
+    app: &AppHandle,
     state: &AppState,
     png: &[u8],
     label: &str,
@@ -1051,16 +1171,15 @@ fn create_image_capture(
     let path = attachments_dir()?.join(format!("capture-{}.png", uuid::Uuid::new_v4()));
     std::fs::write(&path, png).map_err(|error| error.to_string())?;
 
-    let result = state
-        .database
-        .create_item(
+    let result = mutate_one(app, state, |database| {
+        database.create_item(
             label,
             ItemKind::Image,
             source_app,
             source_bundle_id,
             Some(&path.to_string_lossy()),
         )
-        .map_err(|error| error.to_string());
+    });
     if result.is_err() {
         let _ = std::fs::remove_file(&path);
     }
@@ -1212,14 +1331,21 @@ pub fn run() {
                     )
                 })
                 .unwrap_or_else(|_| (GLOBAL_SHORTCUT.to_string(), "Alt+Shift+Space".to_string()));
-            let registered = app
-                .global_shortcut()
-                .register(capture_shortcut.as_str())
-                .is_ok();
+            let isolated_test = std::env::var("CAPTURA_TEST_MODE").as_deref() == Ok("1");
+            let registered = !isolated_test
+                && app
+                    .global_shortcut()
+                    .register(capture_shortcut.as_str())
+                    .is_ok();
             app.state::<AppState>()
                 .shortcut_registered
                 .store(registered, Ordering::Relaxed);
-            let _ = app.global_shortcut().register(clipboard_shortcut.as_str());
+            if isolated_test {
+                app.asset_protocol_scope()
+                    .allow_directory(attachments_dir()?, true)?;
+            } else {
+                let _ = app.global_shortcut().register(clipboard_shortcut.as_str());
+            }
 
             // The paste target must be "the app the user was just working in",
             // not "the app that was frontmost when Captura opened" — with the
@@ -1253,10 +1379,16 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             smoke::start_if_requested(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            qa::start(app.handle().clone());
 
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } if window.label() == "capture-detail" => {
+                api.prevent_close();
+                let _ = window.emit("captura://detail-close-requested", ());
+            }
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
                 let _ = window.hide();
@@ -1274,6 +1406,11 @@ pub fn run() {
             _ => {}
         })
         .invoke_handler(tauri::generate_handler![
+            snapshot_queue,
+            detail::open_capture_detail,
+            detail::get_detail_request,
+            detail::get_capture_details,
+            detail::close_capture_detail,
             list_items,
             create_item,
             update_item,

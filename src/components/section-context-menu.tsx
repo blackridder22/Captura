@@ -1,5 +1,5 @@
 import { ArrowLeft, Trash2 } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useMenuFocus, useMenuPosition } from "../hooks/use-menu-position";
 
 type SectionContextMenuProps = {
   x: number;
@@ -22,18 +22,28 @@ export function SectionContextMenu({
   onCancel,
   onDelete,
 }: SectionContextMenuProps) {
-  const beginDelete = (event: MouseEvent<HTMLButtonElement>) => {
-    if (event.shiftKey) onDelete();
-    else onAskDelete();
-  };
+  const { ref, position } = useMenuPosition(x, y, confirmingDelete);
+  useMenuFocus(ref, confirmingDelete);
 
   return (
     <div
       className="section-context-menu"
-      style={{ left: Math.min(x, 196), top: Math.min(y, 472) }}
+      ref={ref}
+      style={position}
+      data-confirming={confirmingDelete}
       role={confirmingDelete ? "alertdialog" : "menu"}
+      aria-modal={confirmingDelete || undefined}
       aria-label={confirmingDelete ? `Delete ${name}?` : `${name} section actions`}
       onMouseDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onCancel(); }
+        if (["ArrowDown", "ArrowUp", "Tab"].includes(event.key)) {
+          event.preventDefault(); event.stopPropagation();
+          const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          buttons[(index + (event.key === "ArrowUp" || event.shiftKey ? -1 : 1) + buttons.length) % buttons.length]?.focus();
+        }
+      }}
     >
       {confirmingDelete ? (
         <div className="section-delete-confirmation">
@@ -54,11 +64,10 @@ export function SectionContextMenu({
         </div>
       ) : (
         <>
-          <button className="context-danger" role="menuitem" onClick={beginDelete}>
+          <button className="context-danger" role="menuitem" onClick={(event) => event.shiftKey ? onDelete() : onAskDelete()}>
             <Trash2 size={14} />
-            Delete Section
+            Delete section…
           </button>
-          <small>Shift-click Delete to skip confirmation</small>
         </>
       )}
     </div>

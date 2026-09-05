@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Inbox, Keyboard, ListChecks } from "lucide-react";
 import { useCallback, useRef } from "react";
-import { hideMainWindow, quitApp, updateItem } from "./lib/api";
+import { hideMainWindow, quitApp, openCaptureDetail } from "./lib/api";
+import type { CaptureItem } from "./types";
 import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
 import { useBulkActions } from "./hooks/use-bulk-actions";
@@ -17,10 +18,8 @@ import { useSelection } from "./hooks/use-selection";
 import { useSettingsActions } from "./hooks/use-settings-actions";
 import { useShiftSelectionMode } from "./hooks/use-shift-selection-mode";
 import { useUpdater } from "./hooks/use-updater";
-import { EditSheet } from "./components/edit-sheet";
 import { PermissionBanner } from "./components/permission-banner";
 import { FilterTabs } from "./components/filter-tabs";
-import { PreviewSheet } from "./components/preview-sheet";
 import { QuickCapture } from "./components/quick-capture";
 import { QueueContextMenu } from "./components/queue-context-menu";
 import { QueueHeader } from "./components/queue-header";
@@ -82,10 +81,6 @@ export default function App() {
     focusComposer,
   } = useComposer();
   const {
-    editingItem,
-    setEditingItem,
-    previewItems,
-    setPreviewItems,
     contextMenu,
     setContextMenu,
     settingsOpen,
@@ -110,6 +105,10 @@ export default function App() {
   const { dropping } = useFileDrop({ notify });
   const shiftSelectionMode = useShiftSelectionMode();
   const searchRef = useRef<HTMLInputElement>(null);
+  const openDetail = useCallback((ids: string[], mode: "preview" | "edit") => {
+    void openCaptureDetail({ ids, mode }).catch((error) => notify(String(error), "error"));
+  }, [notify]);
+  const editCapture = useCallback((item: CaptureItem) => openDetail([item.id], "edit"), [openDetail]);
 
   const refresh = useCallback(async () => {
     const nextItems = await refreshData();
@@ -190,11 +189,10 @@ export default function App() {
 
   useKeyboardShortcuts({
     shortcuts: appSettings.shortcuts,
-    editingItem,
-    settingsOpen,
+    blocked: settingsOpen || contextMenu !== null,
     dismissTop,
     openSettings,
-    setEditingItem,
+    onEdit: editCapture,
     searchRef,
     selectedId,
     selectedIds: actionIds,
@@ -271,6 +269,7 @@ export default function App() {
           onChange={setSectionFilter}
           onCreate={handleCreateSection}
           onContextMenu={(section, event) => {
+            event.currentTarget.focus({ preventScroll: true });
             setContextMenu({
               kind: "section",
               x: event.clientX,
@@ -329,7 +328,8 @@ export default function App() {
                 onSelectionControl={() =>
                   selectWith(item.id, { toggle: true })
                 }
-                onEdit={() => setEditingItem(item)}
+                onEdit={() => editCapture(item)}
+                onPreview={() => openDetail([item.id], "preview")}
                 onDelete={() => void handleDelete(item.id)}
                 onCopy={() => copyItem(item.id)}
                 onPaste={() => void handlePaste(item.id)}
@@ -409,11 +409,11 @@ export default function App() {
           }}
           onDone={() => void markSelectedDone()}
           onExpand={() => {
-            setPreviewItems(actionItems);
+            openDetail(actionItems.map((item) => item.id), "preview");
             setContextMenu(null);
           }}
           onEdit={() => {
-            if (actionItems[0]) setEditingItem(actionItems[0]);
+            if (actionItems[0]) editCapture(actionItems[0]);
             setContextMenu(null);
           }}
           onMerge={() => void mergeSelected()}
@@ -438,35 +438,6 @@ export default function App() {
           }
           onCancel={() => setContextMenu(null)}
           onDelete={() => void handleDeleteSection(sectionMenu.id)}
-        />
-      ) : null}
-
-      {previewItems.length ? (
-        <PreviewSheet
-          items={previewItems}
-          onClose={() => setPreviewItems([])}
-          onEdit={
-            previewItems.length === 1
-              ? () => {
-                  setEditingItem(previewItems[0]!);
-                  setPreviewItems([]);
-                }
-              : null
-          }
-        />
-      ) : null}
-
-      {editingItem ? (
-        <EditSheet
-          item={editingItem}
-          onClose={() => setEditingItem(null)}
-          onSave={async (content, kind) => {
-            replaceItem(
-              await updateItem({ id: editingItem.id, content, kind }),
-            );
-            setEditingItem(null);
-            announce("Capture updated");
-          }}
         />
       ) : null}
 

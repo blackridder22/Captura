@@ -23,24 +23,25 @@ export function useAppEvents({
     void refresh();
     void refreshPermissions();
 
-    // NOTE(preserved): if this effect cleans up before the subscription
-    // promises settle, the listeners are never detached. Pre-existing
-    // behavior; App never unmounts in production.
+    let disposed = false;
     let stopCapture: () => void = () => {};
     let stopFocus: () => void = () => {};
     let stopPermission: () => void = () => {};
     void onCaptured((item) => {
-      onCapturedItem(item);
+      if (!disposed) onCapturedItem(item);
     }).then((off) => {
-      stopCapture = off;
+      if (disposed) off();
+      else stopCapture = off;
     });
     void onFocusComposer(() => {
-      focusComposer();
+      if (!disposed) focusComposer();
     }).then((off) => {
-      stopFocus = off;
+      if (disposed) off();
+      else stopFocus = off;
     });
-    void onPermissionRequired(onPermissionRequiredEvent).then((off) => {
-      stopPermission = off;
+    void onPermissionRequired((event) => { if (!disposed) onPermissionRequiredEvent(event); }).then((off) => {
+      if (disposed) off();
+      else stopPermission = off;
     });
 
     const handleFocus = () => {
@@ -49,6 +50,7 @@ export function useAppEvents({
     };
     window.addEventListener("focus", handleFocus);
     return () => {
+      disposed = true;
       stopCapture();
       stopFocus();
       stopPermission();

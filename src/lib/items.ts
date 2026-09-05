@@ -5,6 +5,19 @@ import type {
   SectionFilter,
 } from "../types";
 
+// Iterate only the visible excerpt. Array.from(content) would allocate the
+// entire document each time a long capture is rendered in the queue.
+export function markdownExcerpt(content: string, limit = 1024): string {
+  if (content.length <= limit) return content;
+  let excerpt = "";
+  let count = 0;
+  for (const character of content) {
+    if (count++ === limit) break;
+    excerpt += character;
+  }
+  return excerpt;
+}
+
 export function inferKind(content: string): ItemKind {
   const value = content.trim();
 
@@ -99,4 +112,3 @@ export function formatCaptureTime(iso: string) {
     day: "numeric",
   }).format(date);
 }
-

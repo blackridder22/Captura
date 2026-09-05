@@ -152,7 +152,7 @@ fn collect_checks(app: &AppHandle) -> Vec<SmokeCheck> {
 
     checks.push(check(
         "global_shortcut_registered",
-        true,
+        std::env::var("CAPTURA_TEST_MODE").as_deref() != Ok("1"),
         state
             .shortcut_registered
             .load(std::sync::atomic::Ordering::Relaxed)

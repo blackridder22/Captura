@@ -63,6 +63,25 @@ export type UpdateItemInput = {
   id: string;
   content: string;
   kind: ItemKind;
+  expectedUpdatedAt: string;
+};
+
+export type CaptureDetailRequest = {
+  ids: string[];
+  mode: "preview" | "edit";
+};
+
+export type CapturesChangedEvent = {
+  revision: number;
+  upserts: CaptureItem[];
+  deletedIds: string[];
+};
+
+export type QueueSnapshot = {
+  revision: number;
+  items: CaptureItem[];
+  sections: Section[];
+  settings: AppSettings;
 };
 
 export type PermissionStatus = {

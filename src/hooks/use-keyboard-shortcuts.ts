@@ -7,11 +7,10 @@ import type { CaptureItem, KeyboardShortcutSettings } from "../types";
 /// received so state ownership stays single-homed.
 type KeyboardShortcutDeps = {
   shortcuts: KeyboardShortcutSettings;
-  editingItem: CaptureItem | null;
-  settingsOpen: boolean;
+  blocked: boolean;
   dismissTop: () => void;
   openSettings: () => void;
-  setEditingItem: (item: CaptureItem | null) => void;
+  onEdit: (item: CaptureItem) => void;
   searchRef: RefObject<HTMLInputElement | null>;
   selectedId: string | null;
   selectedIds: string[];
@@ -26,11 +25,10 @@ type KeyboardShortcutDeps = {
 
 export function useKeyboardShortcuts({
   shortcuts,
-  editingItem,
-  settingsOpen,
+  blocked,
   dismissTop,
   openSettings,
-  setEditingItem,
+  onEdit,
   searchRef,
   selectedId,
   selectedIds,
@@ -44,11 +42,16 @@ export function useKeyboardShortcuts({
 }: KeyboardShortcutDeps) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
       if (matchesShortcut(event, shortcuts.dismiss)) {
         event.preventDefault();
         dismissTop();
         return;
       }
+
+      // Menus and overlays own their keyboard interaction, including text
+      // selection. Queue shortcuts must never run behind them.
+      if (blocked) return;
 
       if (matchesShortcut(event, shortcuts.close)) {
         event.preventDefault();
@@ -70,11 +73,9 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof Element ? event.target : null;
       if (
-        target?.matches("input, textarea, [contenteditable='true']") ||
-        editingItem ||
-        settingsOpen
+        target?.closest("input, textarea, [contenteditable='true']")
       ) {
         return;
       }
@@ -94,6 +95,7 @@ export function useKeyboardShortcuts({
       }
 
       if (matchesShortcut(event, shortcuts.copy)) {
+        if (window.getSelection()?.toString()) return;
         event.preventDefault();
         void copySelected(false);
         return;
@@ -116,7 +118,7 @@ export function useKeyboardShortcuts({
         selectedItems.length === 1
       ) {
         event.preventDefault();
-        setEditingItem(selectedItems[0]!);
+        onEdit(selectedItems[0]!);
         return;
       }
 
@@ -138,7 +140,7 @@ export function useKeyboardShortcuts({
     shortcuts,
     copySelected,
     dismissTop,
-    editingItem,
+    blocked,
     handleDeleteSelected,
     handlePaste,
     markSelectedDone,
@@ -149,7 +151,6 @@ export function useKeyboardShortcuts({
     selectedId,
     selectedIds,
     selectedItems,
-    setEditingItem,
-    settingsOpen,
+    onEdit,
   ]);
 }

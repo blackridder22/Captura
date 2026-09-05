@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-detail",
+  "description": "Local capture reader and editor, without updater or process access.",
+  "windows": ["capture-detail"],
+  "permissions": ["core:default"]
+}

@@ -48,11 +48,11 @@ describe("section deletion interactions", () => {
       );
     });
 
-    act(() => clickButton(container, "Delete Section"));
+    act(() => clickButton(container, "Delete section…"));
     expect(onAskDelete).toHaveBeenCalledOnce();
     expect(onDelete).not.toHaveBeenCalled();
 
-    act(() => clickButton(container, "Delete Section", true));
+    act(() => clickButton(container, "Delete section…", true));
     expect(onDelete).toHaveBeenCalledOnce();
   });
 

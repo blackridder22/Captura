@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import { shortcutLabel } from "../lib/shortcuts";
 import { Kbd } from "./ui/kbd";
+import { useMenuFocus, useMenuPosition } from "../hooks/use-menu-position";
 
 type QueueContextMenuProps = {
   x: number;
@@ -50,6 +51,8 @@ export function QueueContextMenu({
   onDelete,
 }: QueueContextMenuProps) {
   const count = items.length;
+  const { ref, position } = useMenuPosition(x, y, items.length, 136);
+  useMenuFocus(ref);
   const single = count === 1 ? items[0] : null;
   const allText = items.every((item) => item.kind !== "image");
   const markdownUnavailable = allText
@@ -59,7 +62,8 @@ export function QueueContextMenu({
   return (
     <div
       className="queue-context-menu"
-      style={{ left: Math.min(x, 84), top: Math.min(y, 260) }}
+      ref={ref}
+      style={position}
       role="menu"
       onMouseDown={(event) => event.stopPropagation()}
     >
@@ -108,7 +112,7 @@ export function QueueContextMenu({
       </button>
       <button role="menuitem" onClick={onExpand}>
         <Maximize2 size={14} />
-        Expand
+        Preview
       </button>
       <button role="menuitem" onClick={onEdit} disabled={count !== 1}>
         <FilePenLine size={14} />

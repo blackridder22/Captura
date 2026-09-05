@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef } from "react";
+import { memo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -41,8 +41,7 @@ export function safeMarkdownUrl(url: string) {
   return /^(https?:|mailto:)/i.test(normalized) ? normalized : "";
 }
 
-export function MarkdownText({ content, compact = false }: MarkdownTextProps) {
-  const components = {
+const components = {
     a: ({
       children,
       ...props
@@ -59,11 +58,14 @@ export function MarkdownText({ content, compact = false }: MarkdownTextProps) {
     input: (props: ComponentPropsWithoutRef<"input">) => (
       <input {...props} type="checkbox" disabled />
     ),
-  };
+};
+const remarkPlugins = [remarkGfm];
+
+export const MarkdownText = memo(function MarkdownText({ content, compact = false }: MarkdownTextProps) {
 
   const markdown = (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={remarkPlugins}
       allowedElements={safeElements}
       unwrapDisallowed
       skipHtml
@@ -79,4 +81,4 @@ export function MarkdownText({ content, compact = false }: MarkdownTextProps) {
       {markdown}
     </div>
   );
-}
+});

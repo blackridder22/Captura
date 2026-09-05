@@ -3,11 +3,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   CaptureItem,
+  CaptureDetailRequest,
+  CapturesChangedEvent,
   CopyMode,
   CopyResult,
   CreateItemInput,
   PermissionRequiredEvent,
   PermissionStatus,
+  QueueSnapshot,
   Section,
   ShortcutAction,
   UpdateItemInput,
@@ -18,6 +21,12 @@ const demoStorageKey = "captura.demo.items.v1";
 const demoSectionsKey = "captura.demo.sections.v1";
 const demoSettingsKey = "captura.demo.settings.v1";
 const demoAccessibilitySetupSeenKey = "captura.demo.accessibility-setup-seen.v1";
+const demoRevisionKey = "captura.demo.revision.v1";
+const demoDetailKey = "captura.demo.detail.v1";
+
+function demoRevision() {
+  return Number(localStorage.getItem(demoRevisionKey) ?? 0);
+}
 
 const demoItems: CaptureItem[] = [
   {
@@ -106,8 +115,29 @@ function readDemoItems() {
 }
 
 function writeDemoItems(items: CaptureItem[]) {
+  const previous = readDemoItems();
+  const currentIds = new Set(items.map((item) => item.id));
+  const revision = demoRevision() + 1;
+  localStorage.setItem(demoRevisionKey, String(revision));
   localStorage.setItem(demoStorageKey, JSON.stringify(items));
+  window.dispatchEvent(new CustomEvent<CapturesChangedEvent>("captura://captures-changed", {
+    detail: {
+      revision,
+      upserts: items.filter((item) => !previous.some((old) => JSON.stringify(old) === JSON.stringify(item))),
+      deletedIds: previous.filter((item) => !currentIds.has(item.id)).map((item) => item.id),
+    },
+  }));
   return items;
+}
+
+export async function snapshotQueue(): Promise<QueueSnapshot> {
+  if (isTauriRuntime()) return invoke<QueueSnapshot>("snapshot_queue");
+  return {
+    revision: demoRevision(),
+    items: readDemoItems(),
+    sections: readDemoSections(),
+    settings: readDemoSettings(),
+  };
 }
 
 export async function listItems() {
@@ -126,7 +156,7 @@ export async function createItem(input: CreateItemInput) {
   const now = new Date().toISOString();
   const item: CaptureItem = {
     id: crypto.randomUUID(),
-    content: input.content.trim(),
+    content: input.content,
     kind: input.kind,
     status: "open",
     sourceApp: input.sourceApp ?? null,
@@ -145,13 +175,20 @@ export async function updateItem(input: UpdateItemInput) {
     return invoke<CaptureItem>("update_item", input);
   }
 
-  const updated = readDemoItems().map((item) =>
+  const previous = readDemoItems();
+  const current = previous.find((item) => item.id === input.id);
+  if (!current) throw new Error("This capture is no longer available.");
+  if (current.updatedAt !== input.expectedUpdatedAt) {
+    throw new Error("This capture changed while you were editing. Your draft has been kept.");
+  }
+  if (!input.content.trim()) throw new Error("A capture cannot be empty.");
+  const updated = previous.map((item) =>
     item.id === input.id
       ? {
           ...item,
-          content: input.content.trim(),
+          content: input.content,
           kind: input.kind,
-          updatedAt: new Date().toISOString(),
+          updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
         }
       : item,
   );
@@ -552,4 +589,61 @@ export async function onHudCapture(
   return listen<CaptureItem>("captura://hud", (event) =>
     handler(event.payload),
   );
+}
+
+export async function openCaptureDetail(request: CaptureDetailRequest) {
+  if (isTauriRuntime()) return invoke<void>("open_capture_detail", request);
+  localStorage.setItem(demoDetailKey, JSON.stringify({ ...request, requestedAt: Date.now() }));
+  const detail = window.open("?detail=1", "captura-detail", "width=760,height=600");
+  if (!detail) throw new Error("Allow the preview window to read this capture.");
+  detail.focus();
+}
+
+export async function getDetailRequest(): Promise<CaptureDetailRequest | null> {
+  if (isTauriRuntime()) return invoke<CaptureDetailRequest | null>("get_detail_request");
+  return JSON.parse(localStorage.getItem(demoDetailKey) ?? "null") as CaptureDetailRequest | null;
+}
+
+export async function getCaptureDetails(ids: string[]): Promise<CaptureItem[]> {
+  if (isTauriRuntime()) return invoke<CaptureItem[]>("get_capture_details", { ids });
+  const items = new Map(readDemoItems().map((item) => [item.id, item]));
+  return ids.flatMap((id) => items.has(id) ? [items.get(id)!] : []);
+}
+
+export async function closeCaptureDetail() {
+  if (isTauriRuntime()) return invoke<void>("close_capture_detail");
+  window.close();
+}
+
+export async function onDetailRequest(handler: (request: CaptureDetailRequest) => void): Promise<UnlistenFn> {
+  if (isTauriRuntime()) return listen<CaptureDetailRequest>("captura://detail-request", (event) => handler(event.payload));
+  const storage = (event: StorageEvent) => {
+    if (event.key === demoDetailKey && event.newValue) handler(JSON.parse(event.newValue) as CaptureDetailRequest);
+  };
+  window.addEventListener("storage", storage);
+  return () => window.removeEventListener("storage", storage);
+}
+
+export async function onDetailCloseRequested(handler: () => void): Promise<UnlistenFn> {
+  if (isTauriRuntime()) return listen("captura://detail-close-requested", handler);
+  return () => undefined;
+}
+
+export async function onCapturesChanged(handler: (event: CapturesChangedEvent) => void): Promise<UnlistenFn> {
+  if (isTauriRuntime()) return listen<CapturesChangedEvent>("captura://captures-changed", (event) => handler(event.payload));
+  let previousIds = readDemoItems().map((item) => item.id);
+  const local = (event: Event) => handler((event as CustomEvent<CapturesChangedEvent>).detail);
+  const storage = (event: StorageEvent) => {
+    if (event.key !== demoStorageKey) return;
+    const items = readDemoItems();
+    const currentIds = new Set(items.map((item) => item.id));
+    handler({ revision: demoRevision(), upserts: items, deletedIds: previousIds.filter((id) => !currentIds.has(id)) });
+    previousIds = items.map((item) => item.id);
+  };
+  window.addEventListener("captura://captures-changed", local);
+  window.addEventListener("storage", storage);
+  return () => {
+    window.removeEventListener("captura://captures-changed", local);
+    window.removeEventListener("storage", storage);
+  };
 }

@@ -107,6 +107,8 @@ pub enum DatabaseError {
     EmptyContent,
     #[error("image captures can't be merged")]
     CannotMergeImages,
+    #[error("This capture changed in another window. Copy your draft before reloading the latest version.")]
+    Conflict,
     #[error("database lock was poisoned")]
     Poisoned,
 }
@@ -267,8 +269,7 @@ impl Database {
         source_bundle_id: Option<&str>,
         attachment_path: Option<&str>,
     ) -> Result<CaptureItem, DatabaseError> {
-        let content = content.trim();
-        if content.is_empty() {
+        if content.trim().is_empty() {
             return Err(DatabaseError::EmptyContent);
         }
 
@@ -296,23 +297,54 @@ impl Database {
         self.get_item(&id)
     }
 
+    #[cfg(test)]
     pub fn update_item(
         &self,
         id: &str,
         content: &str,
         kind: ItemKind,
     ) -> Result<CaptureItem, DatabaseError> {
-        let content = content.trim();
-        if content.is_empty() {
+        self.update_item_if_current(id, content, kind, None)
+    }
+
+    pub fn update_item_if_current(
+        &self,
+        id: &str,
+        content: &str,
+        kind: ItemKind,
+        expected_updated_at: Option<&str>,
+    ) -> Result<CaptureItem, DatabaseError> {
+        if content.trim().is_empty() {
             return Err(DatabaseError::EmptyContent);
         }
 
         let connection = self.connection()?;
+        let existing: Option<(String, String)> = connection
+            .query_row(
+                "SELECT updated_at, kind FROM captures WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let (previous_updated_at, previous_kind) = existing.ok_or(DatabaseError::NotFound)?;
+        if expected_updated_at.is_some_and(|expected| expected != previous_updated_at) {
+            return Err(DatabaseError::Conflict);
+        }
+        // Captions must never convert an image into a text capture, or vice versa.
+        if (previous_kind == "image") != (kind == ItemKind::Image) {
+            return Err(DatabaseError::CannotMergeImages);
+        }
+        let mut updated_at = Utc::now();
+        if let Ok(previous) = chrono::DateTime::parse_from_rfc3339(&previous_updated_at) {
+            if updated_at <= previous {
+                updated_at = previous.with_timezone(&Utc) + chrono::Duration::nanoseconds(1);
+            }
+        }
         let changed = connection.execute(
             "UPDATE captures
              SET content = ?2, kind = ?3, updated_at = ?4
              WHERE id = ?1",
-            params![id, content, kind.as_str(), Utc::now().to_rfc3339()],
+            params![id, content, kind.as_str(), updated_at.to_rfc3339()],
         )?;
         drop(connection);
 
@@ -530,6 +562,59 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_whitespace_survives_create_edit_and_stale_save_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("captures.db")).unwrap();
+        let source = "  indented code\n\n# Heading\n\n";
+        let item = database
+            .create_item(source, ItemKind::Note, None, None, None)
+            .unwrap();
+        assert_eq!(item.content, source);
+        let edited = "\n\tmore code\n\n";
+        let saved = database
+            .update_item_if_current(&item.id, edited, ItemKind::Note, Some(&item.updated_at))
+            .unwrap();
+        assert_eq!(saved.content, edited);
+        assert_ne!(saved.updated_at, item.updated_at);
+        assert!(matches!(
+            database.update_item_if_current(
+                &item.id,
+                "stale",
+                ItemKind::Note,
+                Some(&item.updated_at)
+            ),
+            Err(DatabaseError::Conflict)
+        ));
+        assert_eq!(database.get_item(&item.id).unwrap().content, edited);
+        assert!(matches!(
+            database.update_item(&item.id, " \n\t", ItemKind::Note),
+            Err(DatabaseError::EmptyContent)
+        ));
+    }
+
+    #[test]
+    fn image_captions_cannot_discard_attachment_kind() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("captures.db")).unwrap();
+        let item = database
+            .create_item(
+                "Image",
+                ItemKind::Image,
+                None,
+                None,
+                Some("/tmp/example.png"),
+            )
+            .unwrap();
+        assert!(database
+            .update_item(&item.id, "Caption", ItemKind::Note)
+            .is_err());
+        let saved = database
+            .update_item(&item.id, "Caption", ItemKind::Image)
+            .unwrap();
+        assert_eq!(saved.attachment_path, item.attachment_path);
+    }
 
     #[test]
     fn stores_image_items_and_refuses_to_merge_them() {

@@ -262,7 +262,7 @@ dependencies = [
 
 [[package]]
 name = "captura"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "block2",
  "chrono",
