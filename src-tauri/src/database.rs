@@ -97,6 +97,25 @@ ON captures(section_id);
 PRAGMA user_version = 4;
 "#;
 
+const MIGRATION_005: &str = r#"
+ALTER TABLE captures ADD COLUMN thumbnail_path TEXT;
+ALTER TABLE captures ADD COLUMN image_width INTEGER;
+ALTER TABLE captures ADD COLUMN image_height INTEGER;
+PRAGMA user_version = 5;
+"#;
+
+pub struct NewImage<'a> {
+    pub content: &'a str,
+    pub attachment_path: &'a str,
+    pub thumbnail_path: &'a str,
+    pub width: u32,
+    pub height: u32,
+    pub section_id: Option<&'a str>,
+    pub created_at: &'a str,
+    pub source_app: Option<&'a str>,
+    pub source_bundle_id: Option<&'a str>,
+}
+
 #[derive(Debug, Error)]
 pub enum DatabaseError {
     #[error("database error: {0}")]
@@ -176,6 +195,9 @@ pub struct CaptureItem {
     pub source_bundle_id: Option<String>,
     pub section_id: Option<String>,
     pub attachment_path: Option<String>,
+    pub thumbnail_path: Option<String>,
+    pub image_width: Option<u32>,
+    pub image_height: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -199,22 +221,24 @@ impl Database {
                 .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         }
 
-        let connection = Connection::open(path)?;
+        let mut connection = Connection::open(path)?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         let version =
             connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
-        if version < 1 {
-            connection.execute_batch(MIGRATION_001)?;
-        }
-        if version < 2 {
-            connection.execute_batch(MIGRATION_002)?;
-        }
-        if version < 3 {
-            connection.execute_batch(MIGRATION_003)?;
-        }
-        if version < 4 {
-            connection.execute_batch(MIGRATION_004)?;
+        for (index, migration) in [
+            MIGRATION_001,
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+        ]
+        .iter()
+        .enumerate()
+        {
+            if version < (index + 1) as i64 {
+                apply_migration(&mut connection, migration)?;
+            }
         }
 
         Ok(Self {
@@ -237,7 +261,8 @@ impl Database {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             "SELECT id, kind, content, status, source_app, source_bundle_id,
-                    section_id, attachment_path, created_at, updated_at
+                    section_id, attachment_path, created_at, updated_at,
+                    thumbnail_path, image_width, image_height
              FROM captures
              ORDER BY created_at DESC",
         )?;
@@ -248,17 +273,7 @@ impl Database {
 
     pub fn get_item(&self, id: &str) -> Result<CaptureItem, DatabaseError> {
         let connection = self.connection()?;
-        connection
-            .query_row(
-                "SELECT id, kind, content, status, source_app, source_bundle_id,
-                        section_id, attachment_path, created_at, updated_at
-                 FROM captures
-                 WHERE id = ?1",
-                [id],
-                map_capture,
-            )
-            .optional()?
-            .ok_or(DatabaseError::NotFound)
+        query_capture(&connection, id)
     }
 
     pub fn create_item(
@@ -295,6 +310,75 @@ impl Database {
         drop(connection);
 
         self.get_item(&id)
+    }
+
+    pub fn create_image_item(
+        &self,
+        image: NewImage<'_>,
+    ) -> Result<(CaptureItem, bool), DatabaseError> {
+        if image.content.trim().is_empty() {
+            return Err(DatabaseError::EmptyContent);
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let section_exists = match image.section_id {
+            Some(id) => transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sections WHERE id = ?1)",
+                [id],
+                |row| row.get::<_, bool>(0),
+            )?,
+            None => true,
+        };
+        let section = image.section_id.filter(|_| section_exists);
+        let id = Uuid::new_v4().to_string();
+        transaction.execute(
+            "INSERT INTO captures (id, kind, content, status, source_app, source_bundle_id,
+             created_at, updated_at, section_id, attachment_path, thumbnail_path, image_width, image_height)
+             VALUES (?1, 'image', ?2, 'open', ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![id, image.content, image.source_app, image.source_bundle_id, image.created_at,
+                    section, image.attachment_path, image.thumbnail_path, image.width, image.height],
+        )?;
+        // A failed readback must still roll back the row. The importer removes
+        // its staged files on Err, so no fallible read may follow commit.
+        let item = query_capture(&transaction, &id)?;
+        transaction.commit()?;
+        Ok((item, !section_exists))
+    }
+
+    #[cfg(test)]
+    pub fn set_image_thumbnail(
+        &self,
+        id: &str,
+        original: &str,
+        thumbnail: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<CaptureItem, DatabaseError> {
+        self.set_image_thumbnail_if_current(id, original, None, thumbnail, width, height)
+    }
+
+    pub fn set_image_thumbnail_if_current(
+        &self,
+        id: &str,
+        original: &str,
+        expected_thumbnail: Option<&str>,
+        thumbnail: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<CaptureItem, DatabaseError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let changed = transaction.execute(
+            "UPDATE captures SET thumbnail_path = ?3, image_width = ?4, image_height = ?5
+             WHERE id = ?1 AND attachment_path = ?2 AND thumbnail_path IS ?6 AND kind = 'image'",
+            params![id, original, thumbnail, width, height, expected_thumbnail],
+        )?;
+        if changed == 0 {
+            return Err(DatabaseError::Conflict);
+        }
+        let item = query_capture(&transaction, id)?;
+        transaction.commit()?;
+        Ok(item)
     }
 
     #[cfg(test)]
@@ -541,6 +625,29 @@ impl Database {
     }
 }
 
+fn apply_migration(connection: &mut Connection, migration: &str) -> Result<(), DatabaseError> {
+    // Schema changes and user_version advance together, including a table
+    // rebuild. An interrupted/failing migration is safe to retry next launch.
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(migration)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn query_capture(connection: &Connection, id: &str) -> Result<CaptureItem, DatabaseError> {
+    connection
+        .query_row(
+            "SELECT id, kind, content, status, source_app, source_bundle_id,
+                section_id, attachment_path, created_at, updated_at,
+                thumbnail_path, image_width, image_height
+         FROM captures WHERE id = ?1",
+            [id],
+            map_capture,
+        )
+        .optional()?
+        .ok_or(DatabaseError::NotFound)
+}
+
 fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
     let kind: String = row.get(1)?;
     let status: String = row.get(3)?;
@@ -554,6 +661,9 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
         source_bundle_id: row.get(5)?,
         section_id: row.get(6)?,
         attachment_path: row.get(7)?,
+        thumbnail_path: row.get(10)?,
+        image_width: row.get(11)?,
+        image_height: row.get(12)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
     })
@@ -562,6 +672,257 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_migration_rolls_back_every_column_and_can_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("interrupted-migration.db");
+        let mut connection = Connection::open(&path).unwrap();
+        for migration in [MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004] {
+            apply_migration(&mut connection, migration).unwrap();
+        }
+        let failing = MIGRATION_005.replace(
+            "PRAGMA user_version = 5;",
+            "SELECT missing_migration_function(); PRAGMA user_version = 5;",
+        );
+        assert!(apply_migration(&mut connection, &failing).is_err());
+        assert_eq!(
+            connection
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        let columns: Vec<String> = connection
+            .prepare("PRAGMA table_info(captures)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            !columns
+                .iter()
+                .any(|name| ["thumbnail_path", "image_width", "image_height"]
+                    .contains(&name.as_str()))
+        );
+        drop(connection);
+        let database = Database::open(&path).unwrap();
+        assert_eq!(
+            database
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            5
+        );
+        assert!(database.integrity_check().unwrap());
+    }
+
+    #[test]
+    fn image_readback_failure_rolls_back_insert_before_importer_removes_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("readback.db")).unwrap();
+        database.connection().unwrap().execute_batch(
+            "CREATE TRIGGER invalid_image_readback AFTER INSERT ON captures WHEN NEW.kind = 'image'
+             BEGIN UPDATE captures SET image_width = 'invalid width' WHERE id = NEW.id; END;"
+        ).unwrap();
+        let result = database.create_image_item(NewImage {
+            content: "Image",
+            attachment_path: "/tmp/full.png",
+            thumbnail_path: "/tmp/thumb.png",
+            width: 64,
+            height: 32,
+            section_id: None,
+            created_at: "2026-01-01T00:00:00Z",
+            source_app: None,
+            source_bundle_id: None,
+        });
+        assert!(matches!(result, Err(DatabaseError::Sqlite(_))));
+        let count: i64 = database
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM captures", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "a failed readback must not leave a committed capture"
+        );
+    }
+
+    #[test]
+    fn thumbnail_readback_failure_rolls_back_metadata_and_preserves_caption_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("thumbnail-readback.db")).unwrap();
+        let image = database
+            .create_item(
+                "Caption",
+                ItemKind::Image,
+                None,
+                None,
+                Some("/tmp/full.png"),
+            )
+            .unwrap();
+        database.connection().unwrap().execute_batch(
+            "CREATE TRIGGER invalid_thumbnail_readback AFTER UPDATE OF thumbnail_path ON captures
+             BEGIN UPDATE captures SET image_width = 'invalid width' WHERE id = NEW.id; END;"
+        ).unwrap();
+        assert!(database
+            .set_image_thumbnail(&image.id, "/tmp/full.png", "/tmp/thumb.png", 64, 32)
+            .is_err());
+        assert_eq!(database.get_item(&image.id).unwrap(), image);
+    }
+
+    #[test]
+    fn missing_thumbnail_replacement_checks_previous_path_and_preserves_caption_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("thumbnail-replacement.db")).unwrap();
+        let image = database
+            .create_item(
+                "Caption",
+                ItemKind::Image,
+                None,
+                None,
+                Some("/tmp/full.png"),
+            )
+            .unwrap();
+        database
+            .set_image_thumbnail(&image.id, "/tmp/full.png", "/tmp/missing.png", 64, 32)
+            .unwrap();
+        let repaired = database
+            .set_image_thumbnail_if_current(
+                &image.id,
+                "/tmp/full.png",
+                Some("/tmp/missing.png"),
+                "/tmp/repaired.png",
+                64,
+                32,
+            )
+            .unwrap();
+        assert_eq!(
+            repaired.thumbnail_path.as_deref(),
+            Some("/tmp/repaired.png")
+        );
+        assert_eq!(repaired.updated_at, image.updated_at);
+        assert!(matches!(
+            database.set_image_thumbnail_if_current(
+                &image.id,
+                "/tmp/full.png",
+                Some("/tmp/missing.png"),
+                "/tmp/stale.png",
+                64,
+                32
+            ),
+            Err(DatabaseError::Conflict)
+        ));
+        assert_eq!(database.get_item(&image.id).unwrap(), repaired);
+    }
+
+    #[test]
+    fn migrates_v4_without_changing_captures_or_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("migration.db");
+        let connection = Connection::open(&path).unwrap();
+        for migration in [MIGRATION_001, MIGRATION_002, MIGRATION_003, MIGRATION_004] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection.execute("INSERT INTO captures (id, kind, content, status, created_at, updated_at, attachment_path) VALUES ('legacy', 'image', '  Caption  ', 'open', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '/tmp/original.png')", []).unwrap();
+        drop(connection);
+        let database = Database::open(&path).unwrap();
+        let image = database.get_item("legacy").unwrap();
+        assert_eq!(image.content, "  Caption  ");
+        assert_eq!(image.attachment_path.as_deref(), Some("/tmp/original.png"));
+        assert_eq!(image.thumbnail_path, None);
+        assert_eq!(image.image_width, None);
+        assert!(database.integrity_check().unwrap());
+        drop(database);
+        assert_eq!(
+            Database::open(&path).unwrap().get_item("legacy").unwrap(),
+            image
+        );
+    }
+
+    #[test]
+    fn image_insertion_preserves_batch_order_and_deleted_section_falls_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("images.db")).unwrap();
+        let section = database.create_section("Images").unwrap();
+        let first = database
+            .create_image_item(NewImage {
+                content: "First",
+                attachment_path: "/tmp/a.png",
+                thumbnail_path: "/tmp/a.thumb.png",
+                width: 1024,
+                height: 512,
+                section_id: Some(&section.id),
+                created_at: "2026-01-01T00:00:00.000000002Z",
+                source_app: None,
+                source_bundle_id: None,
+            })
+            .unwrap();
+        assert!(!first.1);
+        assert_eq!(first.0.section_id.as_deref(), Some(section.id.as_str()));
+        database.delete_section(&section.id).unwrap();
+        let second = database
+            .create_image_item(NewImage {
+                content: "Second",
+                attachment_path: "/tmp/b.png",
+                thumbnail_path: "/tmp/b.thumb.png",
+                width: 640,
+                height: 480,
+                section_id: Some(&section.id),
+                created_at: "2026-01-01T00:00:00.000000001Z",
+                source_app: None,
+                source_bundle_id: None,
+            })
+            .unwrap();
+        assert!(second.1);
+        assert_eq!(second.0.section_id, None);
+        assert_eq!(
+            database
+                .list_items()
+                .unwrap()
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![first.0.id.as_str(), second.0.id.as_str()]
+        );
+        assert_eq!(first.0.image_width, Some(1024));
+    }
+
+    #[test]
+    fn legacy_thumbnail_cannot_overwrite_a_replacement_or_invalidate_a_caption_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("thumbnail.db")).unwrap();
+        let image = database
+            .create_item(
+                "Caption",
+                ItemKind::Image,
+                None,
+                None,
+                Some("/tmp/original.png"),
+            )
+            .unwrap();
+        assert!(database
+            .set_image_thumbnail(&image.id, "/tmp/replaced.png", "/tmp/thumb.png", 100, 50)
+            .is_err());
+        let thumbnail = database
+            .set_image_thumbnail(&image.id, "/tmp/original.png", "/tmp/thumb.png", 100, 50)
+            .unwrap();
+        assert_eq!(thumbnail.updated_at, image.updated_at);
+        let edited = database
+            .update_item_if_current(
+                &image.id,
+                "Updated caption",
+                ItemKind::Image,
+                Some(&image.updated_at),
+            )
+            .unwrap();
+        assert_eq!(edited.thumbnail_path.as_deref(), Some("/tmp/thumb.png"));
+        database.delete_item(&image.id).unwrap();
+        assert!(database
+            .set_image_thumbnail(&image.id, "/tmp/original.png", "/tmp/other.png", 100, 50)
+            .is_err());
+    }
 
     #[test]
     fn source_whitespace_survives_create_edit_and_stale_save_is_rejected() {

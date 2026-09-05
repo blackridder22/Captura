@@ -1,5 +1,5 @@
-import { FileText, Link2, Sparkles } from "lucide-react";
-import type { FormEvent, RefObject } from "react";
+import { FileText, ImagePlus, Link2, Sparkles } from "lucide-react";
+import type { FormEvent, MouseEvent, RefObject } from "react";
 import type { ItemKind } from "../types";
 import { matchesShortcut, shortcutLabel } from "../lib/shortcuts";
 import { Button } from "./ui/button";
@@ -14,6 +14,9 @@ type QuickCaptureProps = {
   composerRef: RefObject<HTMLTextAreaElement | null>;
   saving: boolean;
   saveShortcut: string;
+  importingImages: boolean;
+  imageMenuOpen: boolean;
+  onAddImage: (event: MouseEvent<HTMLButtonElement>) => void;
 };
 
 const kindOptions = [
@@ -31,6 +34,9 @@ export function QuickCapture({
   composerRef,
   saving,
   saveShortcut,
+  importingImages,
+  imageMenuOpen,
+  onAddImage,
 }: QuickCaptureProps) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -70,7 +76,9 @@ export function QuickCapture({
           ))}
         </div>
 
-        <Button
+        <div className="composer-actions">
+          <Button type="button" variant="ghost" size="icon" className="add-image-button" aria-label="Add image" title="Add image" aria-haspopup="menu" aria-expanded={imageMenuOpen} aria-busy={importingImages} disabled={importingImages} onClick={onAddImage}><ImagePlus size={15} /></Button>
+          <Button
           type="submit"
           variant="accent"
           size="sm"
@@ -78,7 +86,8 @@ export function QuickCapture({
         >
           {saving ? "Saving" : "Save"}
           <Kbd>{shortcutLabel(saveShortcut)}</Kbd>
-        </Button>
+          </Button>
+        </div>
       </div>
     </form>
   );

@@ -1,5 +1,7 @@
 mod database;
 mod detail;
+mod image_import;
+mod imports;
 mod platform;
 #[cfg(target_os = "macos")]
 mod qa;
@@ -9,7 +11,7 @@ mod smoke;
 use std::{
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicIsize, Ordering},
+        atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
         Mutex,
     },
     thread,
@@ -141,6 +143,9 @@ struct AppSettings {
 
 struct AppState {
     database: Database,
+    image_imports: image_import::ImageImportService,
+    image_cleanup_started: AtomicBool,
+    native_interactions: AtomicUsize,
     changes: Mutex<u64>,
     detail_request: Mutex<Option<detail::DetailRequest>>,
     previous_application: Mutex<Option<ActiveApplication>>,
@@ -179,6 +184,9 @@ impl AppState {
         let accessibility_setup_seen = load_accessibility_setup_seen(&database, database_existed)?;
         Ok(Self {
             database,
+            image_imports: image_import::ImageImportService::default(),
+            image_cleanup_started: AtomicBool::new(false),
+            native_interactions: AtomicUsize::new(0),
             changes: Mutex::new(0),
             detail_request: Mutex::new(None),
             previous_application: Mutex::new(None),
@@ -539,15 +547,17 @@ fn toggle_item(
 #[tauri::command]
 fn delete_item(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     mutate_items(&app, &state, |database| {
-        let attachment = database
+        let paths = database
             .get_item(&id)
             .ok()
-            .and_then(|item| item.attachment_path);
+            .map(|item| [item.attachment_path, item.thumbnail_path]);
         database
             .delete_item(&id)
             .map_err(|error| error.to_string())?;
-        if let Some(path) = attachment {
-            let _ = std::fs::remove_file(path);
+        if let Some(paths) = paths {
+            for path in paths.into_iter().flatten() {
+                let _ = std::fs::remove_file(path);
+            }
         }
         Ok(((), vec![], vec![id]))
     })
@@ -584,38 +594,6 @@ fn copy_items(
             })
         }
     }
-}
-
-#[tauri::command]
-fn import_image_files(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    paths: Vec<String>,
-) -> Result<Vec<CaptureItem>, String> {
-    let mut imported = Vec::new();
-    for path in paths {
-        let source = PathBuf::from(&path);
-        let Ok(bytes) = std::fs::read(&source) else {
-            continue;
-        };
-        // Normalizing through AppKit both converts the format and rejects
-        // non-image files in one step.
-        let Some(png) = macos::normalize_image_to_png(&bytes) else {
-            continue;
-        };
-        let label = source
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .filter(|stem| !stem.trim().is_empty())
-            .unwrap_or_else(|| "Image".to_string());
-        let item = create_image_capture(&app, &state, &png, &label, None, None)?;
-        let _ = app.emit("captura://captured", &item);
-        imported.push(item);
-    }
-    if imported.is_empty() {
-        return Err("No images found in the dropped files.".to_string());
-    }
-    Ok(imported)
 }
 
 #[tauri::command]
@@ -952,8 +930,8 @@ fn set_keep_open(state: State<'_, AppState>, keep_open: bool) -> Result<AppSetti
 }
 
 #[tauri::command]
-fn capture_clipboard_now(app: AppHandle) {
-    capture_clipboard(&app);
+async fn capture_clipboard_now(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || capture_clipboard(&app)).await;
 }
 
 fn capture_clipboard_action(app: AppHandle) {
@@ -1045,7 +1023,7 @@ fn handle_global_capture(app: AppHandle) {
                         None,
                     )
                 }),
-                CapturedSelection::Image(png) => create_image_capture(
+                CapturedSelection::ImageBytes(png) => create_image_capture(
                     &app,
                     &state,
                     &png,
@@ -1058,14 +1036,18 @@ fn handle_global_capture(app: AppHandle) {
             if let Ok(item) = result {
                 let _ = app.emit("captura://captured", &item);
                 show_capture_hud(&app, &item);
+            } else if let Err(error) = result {
+                report_capture_error(&app, error);
             }
         }
         Ok(None) => {
-            let fresh_image = clipboard_is_fresh
-                .then(macos::clipboard_image_png)
-                .flatten();
+            let fresh_image = if clipboard_is_fresh {
+                macos::clipboard_image_bytes()
+            } else {
+                Ok(None)
+            };
             match fresh_image {
-                Some(png) => {
+                Ok(Some(png)) => {
                     let state = app.state::<AppState>();
                     let result = create_image_capture(
                         &app,
@@ -1082,16 +1064,19 @@ fn handle_global_capture(app: AppHandle) {
                     if let Ok(item) = result {
                         let _ = app.emit("captura://captured", &item);
                         show_capture_hud(&app, &item);
+                    } else if let Err(error) = result {
+                        report_capture_error(&app, error);
                     }
                 }
-                None => present_main_window(&app, true),
+                Ok(None) => present_main_window(&app, true),
+                Err(error) => report_capture_error(&app, error.to_string()),
             }
         }
-        Err(_) => {
+        Err(error) => {
             if let Some(requirement) = live_permission_requirement(PermissionOperation::Capture) {
                 show_permission_repair(&app, requirement);
             } else {
-                present_main_window(&app, true);
+                report_capture_error(&app, error.to_string());
             }
         }
     }
@@ -1118,36 +1103,77 @@ fn capture_clipboard(app: &AppHandle) {
         .as_ref()
         .and_then(|application| application.bundle_id.as_deref());
 
-    let result = match macos::clipboard_text().filter(|text| !text.trim().is_empty()) {
-        Some(content) => mutate_one(app, &state, |database| {
-            database.create_item(
-                &content,
-                infer_kind(&content),
-                source_app,
-                source_bundle_id,
-                None,
-            )
-        }),
-        None => match macos::clipboard_image_png() {
-            Some(png) => create_image_capture(
-                app,
-                &state,
-                &png,
-                "Image capture",
-                source_app,
-                source_bundle_id,
-            ),
-            None => {
-                present_main_window(app, true);
-                return;
-            }
-        },
+    let inputs = match imports::clipboard_inputs(app) {
+        Ok(inputs) => inputs,
+        Err(error) => {
+            report_capture_error(app, error);
+            return;
+        }
     };
-
-    if let Ok(item) = result {
-        let _ = app.emit("captura://captured", &item);
-        show_capture_hud(app, &item);
+    if !inputs.is_empty() {
+        match imports::import_blocking(
+            app,
+            image_import::ImportRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                section_id: None,
+                inputs,
+            },
+            source_app,
+            source_bundle_id,
+        ) {
+            Ok(result) => {
+                if let Some(item) = result.items.first() {
+                    show_capture_hud(app, item);
+                }
+                let _ = app.emit("captura://image-import-completed", &result);
+            }
+            Err(error) => report_capture_error(app, error),
+        }
+        return;
     }
+    let Some(content) = macos::clipboard_text().filter(|text| !text.trim().is_empty()) else {
+        present_main_window(app, true);
+        return;
+    };
+    match mutate_one(app, &state, |database| {
+        database.create_item(
+            &content,
+            infer_kind(&content),
+            source_app,
+            source_bundle_id,
+            None,
+        )
+    }) {
+        Ok(item) => {
+            let _ = app.emit("captura://captured", &item);
+            show_capture_hud(app, &item);
+        }
+        Err(error) => report_capture_error(app, error),
+    }
+}
+
+fn finish_native_interaction(app: &AppHandle) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let state = handle.state::<AppState>();
+        if state.native_interactions.load(Ordering::Acquire) != 0
+            || state.keep_open.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        if let Some(window) = handle.get_webview_window("main") {
+            if !window.is_focused().unwrap_or(true)
+                && state.main_window_has_focused.swap(false, Ordering::Relaxed)
+            {
+                let _ = window.hide();
+            }
+        }
+    });
+}
+
+fn report_capture_error(app: &AppHandle, error: String) {
+    present_main_window(app, false);
+    let _ = app.emit("captura://capture-error", error);
 }
 
 fn attachments_dir() -> Result<PathBuf, String> {
@@ -1168,22 +1194,28 @@ fn create_image_capture(
     source_app: Option<&str>,
     source_bundle_id: Option<&str>,
 ) -> Result<CaptureItem, String> {
-    let path = attachments_dir()?.join(format!("capture-{}.png", uuid::Uuid::new_v4()));
-    std::fs::write(&path, png).map_err(|error| error.to_string())?;
-
-    let result = mutate_one(app, state, |database| {
-        database.create_item(
-            label,
-            ItemKind::Image,
-            source_app,
-            source_bundle_id,
-            Some(&path.to_string_lossy()),
-        )
-    });
-    if result.is_err() {
-        let _ = std::fs::remove_file(&path);
-    }
-    result
+    let _ = state; // Callers already run on capture/background workers.
+    let result = imports::import_blocking(
+        app,
+        image_import::ImportRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            section_id: None,
+            inputs: vec![image_import::ImageInput::Bytes {
+                label: label.into(),
+                bytes: png.to_vec(),
+            }],
+        },
+        source_app,
+        source_bundle_id,
+    )?;
+    result.items.into_iter().next().ok_or_else(|| {
+        result
+            .issues
+            .into_iter()
+            .map(|issue| issue.message)
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
 }
 
 fn present_main_window(app: &AppHandle, focus_composer: bool) {
@@ -1398,6 +1430,7 @@ pub fn run() {
                 if *focused {
                     state.main_window_has_focused.store(true, Ordering::Relaxed);
                 } else if !state.keep_open.load(Ordering::Relaxed)
+                    && state.native_interactions.load(Ordering::Acquire) == 0
                     && state.main_window_has_focused.swap(false, Ordering::Relaxed)
                 {
                     let _ = window.hide();
@@ -1417,7 +1450,11 @@ pub fn run() {
             toggle_item,
             delete_item,
             copy_items,
-            import_image_files,
+            imports::import_image_files,
+            imports::choose_image_files,
+            imports::paste_image_from_clipboard,
+            imports::ensure_image_thumbnail,
+            imports::cleanup_image_files,
             list_sections,
             create_section,
             delete_section,
@@ -1456,6 +1493,9 @@ mod tests {
             source_bundle_id: None,
             section_id: None,
             attachment_path: attachment.map(str::to_string),
+            thumbnail_path: None,
+            image_width: None,
+            image_height: None,
             created_at: "2026-08-04T00:00:00Z".to_string(),
             updated_at: "2026-08-04T00:00:00Z".to_string(),
         }

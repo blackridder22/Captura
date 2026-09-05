@@ -72,6 +72,8 @@ pub enum PlatformError {
     PasteTarget(String),
     #[error("could not open macOS Accessibility settings")]
     SystemSettings,
+    #[error("{0}")]
+    ImageCapture(String),
 }
 
 type PasteboardEntry = (Retained<NSPasteboardType>, Option<Retained<NSData>>);
@@ -325,32 +327,37 @@ fn markdown_from_html(html: &str) -> Option<String> {
     (!markdown.is_empty()).then(|| markdown.to_string())
 }
 
-fn captured_pasteboard_selection() -> Option<CapturedSelection> {
+fn captured_pasteboard_selection() -> Result<Option<CapturedSelection>, PlatformError> {
     // A copied image may also advertise plain text or HTML (for example, its
     // source URL). Prefer the actual pixels whenever an image flavor exists.
-    if let Some(png) = clipboard_image_png() {
-        return Some(CapturedSelection::Image(png));
+    if let Some(bytes) = clipboard_image_bytes()? {
+        return Ok(Some(CapturedSelection::ImageBytes(bytes)));
     }
 
     if let Some(markdown) = clipboard_html().and_then(|html| markdown_from_html(&html)) {
-        return Some(CapturedSelection::Text(markdown));
+        return Ok(Some(CapturedSelection::Text(markdown)));
     }
 
-    clipboard_text().and_then(|text| {
+    Ok(clipboard_text().and_then(|text| {
         let text = text.trim();
         (!text.is_empty()).then(|| CapturedSelection::Text(text.to_string()))
-    })
+    }))
 }
 
-/// Reads a clipboard image as PNG bytes, converting TIFF (the common
-/// pasteboard flavor for screenshots and app copies) when necessary.
-pub fn clipboard_image_png() -> Option<Vec<u8>> {
+/// Snapshots bounded encoded PNG/TIFF bytes. Conversion and dimension checks
+/// happen on the shared image worker after this native pasteboard read.
+pub fn clipboard_image_bytes() -> Result<Option<Vec<u8>>, PlatformError> {
     let pasteboard = NSPasteboard::generalPasteboard();
-    if let Some(data) = pasteboard.dataForType(unsafe { NSPasteboardTypePNG }) {
-        return Some(data.to_vec());
+    for flavor in [unsafe { NSPasteboardTypePNG }, unsafe {
+        NSPasteboardTypeTIFF
+    }] {
+        if let Some(data) = pasteboard.dataForType(flavor) {
+            crate::image_import::check_file_size(data.len() as u64)
+                .map_err(|error| PlatformError::ImageCapture(error.message))?;
+            return Ok(Some(data.to_vec()));
+        }
     }
-    let tiff = pasteboard.dataForType(unsafe { NSPasteboardTypeTIFF })?;
-    normalize_image_to_png(&tiff.to_vec())
+    Ok(None)
 }
 
 /// Re-encodes any image format AppKit can decode into PNG so storage,
@@ -559,7 +566,7 @@ fn selected_text_via_accessibility(application: &ActiveApplication) -> Option<St
 
 pub enum CapturedSelection {
     Text(String),
-    Image(Vec<u8>),
+    ImageBytes(Vec<u8>),
 }
 
 pub fn copy_selection(
@@ -586,7 +593,7 @@ pub fn copy_selection(
             if pasteboard_change_count() != sentinel_change {
                 // The source app replaced our sentinel. Read every supported
                 // flavor before restoring the user's original clipboard.
-                return Ok(captured_pasteboard_selection());
+                return captured_pasteboard_selection();
             }
         }
 
@@ -694,7 +701,7 @@ mod tests {
         let _guard = APP_KIT_TEST_LOCK.lock().expect("AppKit test lock");
         // Guard the user's clipboard: snapshot before, restore after.
         let snapshot = ClipboardSnapshot::capture();
-        let result = write_clipboard_image(&ONE_PIXEL_PNG).map(|()| clipboard_image_png());
+        let result = write_clipboard_image(&ONE_PIXEL_PNG).and_then(|()| clipboard_image_bytes());
         snapshot.restore();
 
         let read_back = result.expect("write image").expect("read image back");
@@ -786,7 +793,7 @@ println!("{captured}");</code></pre>
         };
         snapshot.restore();
 
-        match captured {
+        match captured.expect("capture pasteboard selection") {
             Some(CapturedSelection::Text(markdown)) => assert_eq!(
                 markdown,
                 "# Heading\n\nA [link](https://example.com).\n\n* One\n* Two"

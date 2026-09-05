@@ -16,6 +16,9 @@ function item(
     sourceBundleId: null,
     sectionId: null,
     attachmentPath: kind === "image" ? "/tmp/capture.png" : null,
+    thumbnailPath: null,
+    imageWidth: null,
+    imageHeight: null,
     createdAt: "2026-08-04T00:00:00Z",
     updatedAt: "2026-08-04T00:00:00Z",
   };

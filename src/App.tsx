@@ -1,12 +1,14 @@
 import { ArrowDown, ArrowUp, Inbox, Keyboard, ListChecks } from "lucide-react";
-import { useCallback, useRef } from "react";
-import { hideMainWindow, quitApp, openCaptureDetail } from "./lib/api";
+import { useCallback, useEffect, useRef } from "react";
+import { cleanupImageFiles, hideMainWindow, quitApp, openCaptureDetail } from "./lib/api";
 import type { CaptureItem } from "./types";
 import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
 import { useBulkActions } from "./hooks/use-bulk-actions";
 import { useComposer } from "./hooks/use-composer";
 import { useFileDrop } from "./hooks/use-file-drop";
+import { useImageImport } from "./hooks/use-image-import";
+import { useImageThumbnails } from "./hooks/use-image-thumbnails";
 import { useItemActions } from "./hooks/use-item-actions";
 import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { useNotify } from "./hooks/use-notify";
@@ -29,6 +31,8 @@ import { SectionContextMenu } from "./components/section-context-menu";
 import { SettingsSheet } from "./components/settings-sheet";
 import { WelcomeSetup } from "./components/welcome-setup";
 import { Kbd } from "./components/ui/kbd";
+import { ImageImportMenu } from "./components/image-import-menu";
+import { ImageImportFeedback } from "./components/image-import-feedback";
 
 export default function App() {
   const {
@@ -102,7 +106,19 @@ export default function App() {
     checkForUpdates,
     installUpdate,
   } = useUpdater({ notify });
-  const { dropping } = useFileDrop({ notify });
+  const showImportedImages = useCallback(() => setFilter("inbox"), [setFilter]);
+  const imageImport = useImageImport({ sectionFilter, notify, onSuccess: showImportedImages });
+  const { dropping } = useFileDrop({ notify, importPaths: imageImport.importPaths, busy: imageImport.busy });
+  const queueRef = useRef<HTMLElement>(null);
+  const failedThumbnails = useImageThumbnails(queueRef, visibleItems, applyUpdatedItems);
+  useEffect(() => {
+    if (loading) return;
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => { void cleanupImageFiles().catch((error) => console.warn("Image file cleanup failed", error)); });
+    });
+    return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); };
+  }, [loading]);
   const shiftSelectionMode = useShiftSelectionMode();
   const searchRef = useRef<HTMLInputElement>(null);
   const openDetail = useCallback((ids: string[], mode: "preview" | "edit") => {
@@ -260,7 +276,16 @@ export default function App() {
           composerRef={composerRef}
           saving={saving}
           saveShortcut={appSettings.shortcuts.save}
+          importingImages={imageImport.busy}
+          imageMenuOpen={contextMenu?.kind === "image"}
+          onAddImage={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            event.currentTarget.focus({ preventScroll: true });
+            setContextMenu({ kind: "image", x: bounds.left, y: bounds.bottom + 5 });
+          }}
         />
+
+        <ImageImportFeedback busy={imageImport.busy} result={imageImport.result} onDismiss={imageImport.dismissResult} />
 
         <FilterTabs active={filter} counts={counts} onChange={setFilter} />
         <SectionBar
@@ -281,6 +306,7 @@ export default function App() {
         />
 
         <section
+          ref={queueRef}
           className="queue-list"
           role="listbox"
           aria-label="Captured items"
@@ -304,6 +330,7 @@ export default function App() {
                 sectionName={
                   item.sectionId ? sectionNames.get(item.sectionId) : undefined
                 }
+                thumbnailFailed={failedThumbnails.has(item.id)}
                 onSelect={(event) =>
                   selectWith(item.id, {
                     toggle:
@@ -393,6 +420,8 @@ export default function App() {
           )}
         </footer>
       </section>
+
+      {contextMenu?.kind === "image" ? <ImageImportMenu x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)} onChoose={() => { setContextMenu(null); void imageImport.chooseImages(); }} onPaste={() => { setContextMenu(null); void imageImport.pasteImage(); }} /> : null}
 
       {contextMenu?.kind === "queue" ? (
         <QueueContextMenu

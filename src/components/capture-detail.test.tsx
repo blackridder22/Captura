@@ -17,7 +17,7 @@ vi.mock("../lib/api", () => ({
   onDetailCloseRequested: vi.fn(async (handler) => { nativeClose = handler; return vi.fn(); }),
   onCapturesChanged: vi.fn(async (handler) => { nativeChange = handler; return vi.fn(); }),
 }));
-const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
+const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
 const second = { ...first, id: "second", content: "# Second" };
 function click(container: HTMLElement, text: string) {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === text || element.getAttribute("aria-label") === text);
@@ -54,6 +54,19 @@ describe("standalone capture reader and draft lifecycle", () => {
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(first.content);
     expect(document.activeElement).toBe(container.querySelector("textarea"));
     expect(container.querySelector('[data-split="true"]')).not.toBeNull();
+  });
+
+  it("reads the full image and edits its caption without changing its image kind", async () => {
+    const image = { ...first, kind: "image" as const, attachmentPath: "/full.png", thumbnailPath: "/thumbnail.png", imageWidth: 4000, imageHeight: 3000 };
+    vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([image]);
+    vi.mocked(api.updateItem).mockImplementationOnce(async (input) => ({ ...image, ...input, updatedAt: "2026-09-05T10:00:01Z" }));
+    await mount();
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/full.png");
+    act(() => click(container, "Edit"));
+    expect(container.querySelector("textarea")?.getAttribute("aria-label")).toBe("Image caption");
+    act(() => type(container, "New caption"));
+    await act(async () => click(container, "Save changes"));
+    expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ content: "New caption", kind: "image" }));
   });
 
   it("preserves every Markdown source character and expected timestamp when saving", async () => {

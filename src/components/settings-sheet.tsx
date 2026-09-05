@@ -1,3 +1,4 @@
+import { version as appVersion } from "../../package.json";
 import {
   Check,
   Clipboard,
@@ -244,7 +245,7 @@ export function SettingsSheet({
         </div>
 
         <footer>
-          <span>Captura 0.0.3</span>
+          <span>Captura {appVersion}</span>
           <Button variant="ghost" size="sm" onClick={onQuit}>
             <LogOut size={14} />
             Quit Captura

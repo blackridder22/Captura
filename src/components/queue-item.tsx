@@ -23,6 +23,7 @@ type QueueItemProps = {
   multiSelected: boolean;
   selectionMode: boolean;
   sectionName?: string;
+  thumbnailFailed?: boolean;
   onSelect: (event: MouseEvent<HTMLElement>) => void;
   onContextMenu: (event: MouseEvent<HTMLElement>) => void;
   onToggle: () => void;
@@ -60,6 +61,7 @@ export function QueueItem({
   multiSelected,
   selectionMode,
   sectionName,
+  thumbnailFailed = false,
   onSelect,
   onContextMenu,
   onToggle,
@@ -102,13 +104,13 @@ export function QueueItem({
 
       <div className="item-copy">
         {item.kind === "image" && item.attachmentPath ? (
-          <figure className="item-thumb">
-            <img
-              src={attachmentUrl(item.attachmentPath)}
+          <figure className="item-thumb" data-thumbnail-id={item.id}>
+            {item.thumbnailPath ? <img
+              src={attachmentUrl(item.thumbnailPath)}
               alt={item.content}
               loading="lazy"
               draggable={false}
-            />
+            /> : <span className="thumbnail-placeholder" role="img" aria-label={thumbnailFailed ? "Image preview unavailable. Open capture to view the image." : "Image preview loading"}><ImageIcon size={17} strokeWidth={1.5} /></span>}
           </figure>
         ) : (
           <div className="item-markdown" data-link={item.kind === "link"}>

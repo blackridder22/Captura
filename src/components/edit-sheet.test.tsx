@@ -14,7 +14,7 @@ const item: CaptureItem = {
   sourceApp: "Synara",
   sourceBundleId: null,
   sectionId: null,
-  attachmentPath: null,
+  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
   createdAt: "2026-08-04T17:20:00Z",
   updatedAt: "2026-08-04T17:20:00Z",
 };

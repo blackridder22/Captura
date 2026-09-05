@@ -11,18 +11,24 @@ export function compareCaptureTimestamps(left: string, right: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+export function sameCaptureItem(left: CaptureItem, right: CaptureItem): boolean {
+  return (Object.keys(left) as (keyof CaptureItem)[]).every((key) => left[key] === right[key]) &&
+    (Object.keys(right) as (keyof CaptureItem)[]).every((key) => left[key] === right[key]);
+}
+
 export function reconcileCaptures(items: CaptureItem[], change: Pick<CapturesChangedEvent, "upserts" | "deletedIds">) {
   const deleted = new Set(change.deletedIds);
   const updates = new Map(change.upserts.map((item) => [item.id, item]));
   const existing = new Set(items.map((item) => item.id));
   const added = change.upserts.filter((item) => !existing.has(item.id) && !deleted.has(item.id));
-  return [
+  const next = [
     ...added,
     ...items.filter((item) => !deleted.has(item.id)).map((item) => {
       const update = updates.get(item.id);
-      return update && compareCaptureTimestamps(update.updatedAt, item.updatedAt) >= 0 ? update : item;
+      return update && compareCaptureTimestamps(update.updatedAt, item.updatedAt) >= 0 && !sameCaptureItem(update, item) ? update : item;
     }),
   ];
+  return next.length === items.length && next.every((item, index) => item === items[index]) ? items : next;
 }
 
 export function canAcceptSnapshot(snapshotRevision: number, currentRevision: number, startedEpoch: number, currentEpoch: number) {

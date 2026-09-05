@@ -43,6 +43,9 @@ export type CaptureItem = {
   sourceBundleId: string | null;
   sectionId: string | null;
   attachmentPath: string | null;
+  thumbnailPath: string | null;
+  imageWidth: number | null;
+  imageHeight: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -84,6 +87,16 @@ export type QueueSnapshot = {
   settings: AppSettings;
 };
 
+export type ImageImportInput = { requestId: string; sectionId: string | null };
+export type ImageImportIssue = { index: number | null; name: string | null; code: string; message: string };
+export type ImageImportResult = {
+  requestId: string;
+  cancelled: boolean;
+  items: CaptureItem[];
+  issues: ImageImportIssue[];
+  warnings: ImageImportIssue[];
+};
+
 export type PermissionStatus = {
   accessibilityTrusted: boolean;
   postEventTrusted: boolean;
@@ -99,6 +112,7 @@ export type PermissionRequiredEvent = {
 
 export type ContextMenu =
   | { kind: "queue"; x: number; y: number }
+  | { kind: "image"; x: number; y: number }
   | {
       kind: "section";
       x: number;

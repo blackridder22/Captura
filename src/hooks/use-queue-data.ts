@@ -18,8 +18,10 @@ export function useQueueData() {
   const listenerReady = useRef<Promise<void>>(Promise.resolve());
 
   const commit = useCallback((update: (current: CaptureItem[]) => CaptureItem[]) => {
+    const next = update(itemsRef.current);
+    if (next === itemsRef.current) return;
     mutationEpoch.current += 1;
-    itemsRef.current = update(itemsRef.current);
+    itemsRef.current = next;
     setItems(itemsRef.current);
   }, []);
 

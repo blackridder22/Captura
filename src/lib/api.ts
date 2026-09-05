@@ -8,6 +8,8 @@ import type {
   CopyMode,
   CopyResult,
   CreateItemInput,
+  ImageImportInput,
+  ImageImportResult,
   PermissionRequiredEvent,
   PermissionStatus,
   QueueSnapshot,
@@ -37,7 +39,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
   },
@@ -49,7 +51,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "Chrome",
     sourceBundleId: "com.google.Chrome",
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: new Date(Date.now() - 11 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
   },
@@ -62,7 +64,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: new Date(Date.now() - 16 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 16 * 60_000).toISOString(),
   },
@@ -74,7 +76,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: null,
     sourceBundleId: null,
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: new Date(Date.now() - 25 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
   },
@@ -86,7 +88,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: new Date(Date.now() - 36 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 36 * 60_000).toISOString(),
   },
@@ -107,6 +109,9 @@ function readDemoItems() {
     return (JSON.parse(stored) as CaptureItem[]).map((item) => ({
       ...item,
       sectionId: item.sectionId ?? null,
+      thumbnailPath: item.thumbnailPath ?? null,
+      imageWidth: item.imageWidth ?? null,
+      imageHeight: item.imageHeight ?? null,
     }));
   } catch {
     localStorage.setItem(demoStorageKey, JSON.stringify(demoItems));
@@ -162,7 +167,7 @@ export async function createItem(input: CreateItemInput) {
     sourceApp: input.sourceApp ?? null,
     sourceBundleId: null,
     sectionId: null,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -399,7 +404,7 @@ export async function mergeItems(ids: string[]) {
     sourceApp: null,
     sourceBundleId: null,
     sectionId,
-    attachmentPath: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -410,11 +415,30 @@ export async function mergeItems(ids: string[]) {
   return merged;
 }
 
-export async function importImageFiles(paths: string[]) {
+export async function importImageFiles(input: ImageImportInput & { paths: string[] }): Promise<ImageImportResult> {
   if (isTauriRuntime()) {
-    return invoke<CaptureItem[]>("import_image_files", { paths });
+    return invoke<ImageImportResult>("import_image_files", input);
   }
-  return [];
+  throw new Error("Open Captura to import image files.");
+}
+
+export async function chooseImageFiles(input: ImageImportInput): Promise<ImageImportResult> {
+  if (isTauriRuntime()) return invoke<ImageImportResult>("choose_image_files", input);
+  throw new Error("Open Captura to choose image files.");
+}
+
+export async function pasteImageFromClipboard(input: ImageImportInput): Promise<ImageImportResult> {
+  if (isTauriRuntime()) return invoke<ImageImportResult>("paste_image_from_clipboard", input);
+  throw new Error("Open Captura to paste images from the clipboard.");
+}
+
+export async function ensureImageThumbnail(id: string): Promise<CaptureItem> {
+  if (isTauriRuntime()) return invoke<CaptureItem>("ensure_image_thumbnail", { id });
+  throw new Error("Image thumbnails are available in Captura.");
+}
+
+export async function cleanupImageFiles(): Promise<void> {
+  if (isTauriRuntime()) return invoke<void>("cleanup_image_files");
 }
 
 /// Resolves an attachment's on-disk path to a URL the WebView may load.
@@ -646,4 +670,14 @@ export async function onCapturesChanged(handler: (event: CapturesChangedEvent) =
     window.removeEventListener("captura://captures-changed", local);
     window.removeEventListener("storage", storage);
   };
+}
+
+export async function onImageImportCompleted(handler: (result: ImageImportResult) => void): Promise<UnlistenFn> {
+  if (isTauriRuntime()) return listen<ImageImportResult>("captura://image-import-completed", (event) => handler(event.payload));
+  return () => undefined;
+}
+
+export async function onCaptureError(handler: (message: string) => void): Promise<UnlistenFn> {
+  if (isTauriRuntime()) return listen<string>("captura://capture-error", (event) => handler(event.payload));
+  return () => undefined;
 }
