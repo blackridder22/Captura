@@ -8,8 +8,6 @@ export function useOverlays() {
 
   const openSettings = useCallback(() => setSettingsOpen(true), []);
 
-  // Reading/editing lives in its own native window. Only queue-local surfaces
-  // participate in this dismiss stack.
   const dismissTop = useCallback(() => {
     if (contextMenu) {
       setContextMenu(null);

@@ -147,7 +147,6 @@ struct AppState {
     image_cleanup_started: AtomicBool,
     open_image_pickers: AtomicUsize,
     changes: Mutex<u64>,
-    detail_request: Mutex<Option<detail::DetailRequest>>,
     previous_application: Mutex<Option<ActiveApplication>>,
     shortcuts: Mutex<KeyboardShortcuts>,
     shortcut_registered: AtomicBool,
@@ -188,7 +187,6 @@ impl AppState {
             image_cleanup_started: AtomicBool::new(false),
             open_image_pickers: AtomicUsize::new(0),
             changes: Mutex::new(0),
-            detail_request: Mutex::new(None),
             previous_application: Mutex::new(None),
             shortcuts: Mutex::new(shortcuts),
             shortcut_registered: AtomicBool::new(false),
@@ -1417,10 +1415,6 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
-            WindowEvent::CloseRequested { api, .. } if window.label() == "capture-detail" => {
-                api.prevent_close();
-                let _ = window.emit("captura://detail-close-requested", ());
-            }
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
                 let _ = window.hide();
@@ -1440,10 +1434,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             snapshot_queue,
-            detail::open_capture_detail,
-            detail::get_detail_request,
             detail::get_capture_details,
-            detail::close_capture_detail,
             list_items,
             create_item,
             update_item,

@@ -3,18 +3,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CaptureDetailRequest, CaptureItem, CapturesChangedEvent } from "../types";
 import * as api from "../lib/api";
-import CaptureDetail from "./capture-detail";
+import CaptureSheet from "./capture-sheet";
 import { defaultShortcuts } from "../lib/shortcuts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-let nativeRequest: (request: CaptureDetailRequest) => void;
-let nativeClose: () => void;
+const onClose = vi.fn();
 let nativeChange: (change: CapturesChangedEvent) => void;
 vi.mock("../lib/api", () => ({
-  getDetailRequest: vi.fn(), getCaptureDetails: vi.fn(), updateItem: vi.fn(), closeCaptureDetail: vi.fn(),
-  getAppSettings: vi.fn(), copyItems: vi.fn(), attachmentUrl: (value: string) => value,
-  onDetailRequest: vi.fn(async (handler) => { nativeRequest = handler; return vi.fn(); }),
-  onDetailCloseRequested: vi.fn(async (handler) => { nativeClose = handler; return vi.fn(); }),
+  getCaptureDetails: vi.fn(), updateItem: vi.fn(),
+  copyItems: vi.fn(), attachmentUrl: (value: string) => value,
   onCapturesChanged: vi.fn(async (handler) => { nativeChange = handler; return vi.fn(); }),
 }));
 const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
@@ -30,30 +27,57 @@ function type(container: HTMLElement, text: string) {
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-describe("standalone capture reader and draft lifecycle", () => {
+describe("in-panel capture preview and editor lifecycle", () => {
   let container: HTMLDivElement;
   let root: Root;
   beforeEach(() => {
     vi.clearAllMocks();
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 760 });
-    vi.mocked(api.getDetailRequest).mockResolvedValue({ ids: ["first"], mode: "preview" });
     vi.mocked(api.getCaptureDetails).mockImplementation(async (ids) => ids.map((id) => id === "first" ? first : second));
-    vi.mocked(api.getAppSettings).mockResolvedValue({ keepOpen: false, shortcuts: defaultShortcuts });
     vi.mocked(api.updateItem).mockImplementation(async (input) => ({ ...first, ...input, updatedAt: "2026-09-05T10:00:00.000000002Z" }));
-    vi.mocked(api.closeCaptureDetail).mockResolvedValue();
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
   afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); });
-  const mount = async () => { await act(async () => { root.render(<CaptureDetail />); }); };
+  const mount = async (request: CaptureDetailRequest = { ids: ["first"], mode: "preview" }) => { await act(async () => { root.render(<CaptureSheet request={request} shortcuts={defaultShortcuts} onClose={onClose} />); }); };
 
-  it("opens preview, then edits source immediately beside the rendered Markdown", async () => {
+  it("opens a read-only Markdown overlay, then exposes the editor with Source and Preview tabs", async () => {
     await mount();
     expect(container.querySelector("h1")?.textContent).toBe("First");
     expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
     act(() => click(container, "Edit"));
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(first.content);
     expect(document.activeElement).toBe(container.querySelector("textarea"));
-    expect(container.querySelector('[data-split="true"]')).not.toBeNull();
+    expect(container.querySelector('[role="dialog"]')?.parentElement?.classList.contains("capture-backdrop")).toBe(true);
+    expect(container.querySelector("[data-capture-preview]")).toBeNull();
+    act(() => click(container, "Preview"));
+    expect(container.querySelector("h1")?.textContent).toBe("First");
+  });
+
+  it("opens directly in the editor and contains Escape within the overlay", async () => {
+    await mount({ ids: ["first"], mode: "edit" });
+    const source = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(document.activeElement).toBe(source);
+    expect(source.value).toBe(first.content);
+    act(() => type(container, "unsaved draft"));
+    const queueKey = vi.fn();
+    window.addEventListener("keydown", queueKey);
+    act(() => source.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(queueKey).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", queueKey);
+  });
+
+  it("leaves Enter available to buttons and Markdown links instead of opening the editor", async () => {
+    vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([{ ...first, content: "# Links\n\n[Documentation](https://example.com)" }]);
+    await mount();
+    const controls = [container.querySelector("button")!, container.querySelector("a")!];
+    for (const control of controls) {
+      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      act(() => { control.focus(); control.dispatchEvent(enter); });
+      expect(enter.defaultPrevented).toBe(false);
+      expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("preview");
+    }
   });
 
   it("reads the full image and edits its caption without changing its image kind", async () => {
@@ -75,8 +99,8 @@ describe("standalone capture reader and draft lifecycle", () => {
     act(() => type(container, draft));
     await act(async () => click(container, "Save changes"));
     expect(api.updateItem).toHaveBeenCalledWith({ id: first.id, content: draft, kind: "note", expectedUpdatedAt: first.updatedAt });
-    expect(container.querySelector("main")?.dataset.mode).toBe("preview");
-    act(() => click(container, "Source"));
+    expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("preview");
+    act(() => click(container, "Edit"));
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(draft);
   });
 
@@ -86,27 +110,27 @@ describe("standalone capture reader and draft lifecycle", () => {
     await act(async () => click(container, "Save changes"));
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("# Keep this draft\n");
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("Disk full");
-    expect(container.querySelector("main")?.dataset.mode).toBe("edit");
+    expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("edit");
+    expect(document.activeElement).toBe(container.querySelector("textarea"));
   });
 
-  it("guards native close, preserves on Cancel, then clears the hidden reader on Discard", async () => {
+  it("guards closing the overlay, keeps the draft on Cancel and closes on Discard", async () => {
     await mount(); act(() => click(container, "Edit")); act(() => type(container, "unsaved"));
-    act(() => nativeClose());
+    act(() => click(container, "Close capture"));
     expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
     act(() => click(container.querySelector('[role="alertdialog"]')!, "Cancel"));
-    expect(api.closeCaptureDetail).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("unsaved");
-    act(() => nativeClose());
+    act(() => click(container, "Close capture"));
     await act(async () => click(container.querySelector('[role="alertdialog"]')!, "Discard"));
-    expect(api.closeCaptureDetail).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
     expect(container.querySelector("textarea")).toBeNull();
-    await act(async () => nativeRequest({ ids: ["second"], mode: "preview" }));
+    await mount({ ids: ["second"], mode: "preview" });
     expect(container.querySelector("h1")?.textContent).toBe("Second");
   });
 
   it("keeps requested preview order and guards navigation away from a dirty capture", async () => {
-    vi.mocked(api.getDetailRequest).mockResolvedValue({ ids: ["second", "first"], mode: "preview" });
-    await mount();
+    await mount({ ids: ["second", "first"], mode: "preview" });
     expect(container.querySelector("h1")?.textContent).toBe("Second");
     act(() => click(container, "Edit")); act(() => type(container, "second draft"));
     act(() => click(container, "Next capture"));
@@ -116,15 +140,12 @@ describe("standalone capture reader and draft lifecycle", () => {
     expect(container.textContent).toContain("2 of 2");
   });
 
-  it("debounces the preview without delaying source input and preserves the draft across narrow tabs", async () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+  it("renders the current draft when switching to Preview and retains source when switching back", async () => {
     await mount();
-    vi.useFakeTimers();
     act(() => click(container, "Edit"));
-    expect(container.querySelector('[data-detail-preview]')).toBeNull();
+    expect(container.querySelector('[data-capture-preview]')).toBeNull();
     act(() => type(container, "## Updated"));
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("## Updated");
-    act(() => vi.advanceTimersByTime(150));
     act(() => click(container, "Preview"));
     expect(container.querySelector("h2")?.textContent).toBe("Updated");
     act(() => click(container, "Source"));

@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Inbox, Keyboard, ListChecks } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
-import { cleanupImageFiles, hideMainWindow, quitApp, openCaptureDetail } from "./lib/api";
-import type { CaptureItem } from "./types";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { cleanupImageFiles, hideMainWindow, quitApp } from "./lib/api";
+import type { CaptureDetailRequest, CaptureItem } from "./types";
 import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
 import { useBulkActions } from "./hooks/use-bulk-actions";
@@ -32,6 +32,8 @@ import { WelcomeSetup } from "./components/welcome-setup";
 import { Kbd } from "./components/ui/kbd";
 import { ImageImportMenu } from "./components/image-import-menu";
 import { ImageImportFeedback } from "./components/image-import-feedback";
+
+const CaptureSheet = lazy(() => import("./components/capture-sheet"));
 
 export default function App() {
   const {
@@ -119,9 +121,23 @@ export default function App() {
   }, [loading]);
   const shiftSelectionMode = useShiftSelectionMode();
   const searchRef = useRef<HTMLInputElement>(null);
+  const [captureRequest, setCaptureRequest] = useState<CaptureDetailRequest | null>(null);
+  const captureRequestRef = useRef(captureRequest);
+  captureRequestRef.current = captureRequest;
+  const captureOpener = useRef<HTMLElement | null>(null);
   const openDetail = useCallback((ids: string[], mode: "preview" | "edit") => {
-    void openCaptureDetail({ ids, mode }).catch((error) => notify(String(error), "error"));
-  }, [notify]);
+    if (!ids.length) return;
+    captureOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setContextMenu(null);
+    setCaptureRequest({ ids, mode });
+  }, [setContextMenu]);
+  const closeDetail = useCallback(() => {
+    setCaptureRequest(null);
+    requestAnimationFrame(() => captureOpener.current?.focus({ preventScroll: true }));
+  }, []);
+  const focusQueueComposer = useCallback(() => {
+    if (!captureRequestRef.current) focusComposer();
+  }, [focusComposer]);
   const editCapture = useCallback((item: CaptureItem) => openDetail([item.id], "edit"), [openDetail]);
 
   const refresh = useCallback(async () => {
@@ -197,12 +213,13 @@ export default function App() {
     refresh,
     refreshPermissions,
     onCapturedItem: handleCaptured,
-    focusComposer,
+    focusComposer: focusQueueComposer,
     onPermissionRequiredEvent: handlePermissionRequired,
   });
 
   useKeyboardShortcuts({
     shortcuts: appSettings.shortcuts,
+    suspended: captureRequest !== null,
     blocked: settingsOpen || contextMenu !== null,
     dismissTop,
     openSettings,
@@ -233,6 +250,7 @@ export default function App() {
       onMouseDown={() => contextMenu && setContextMenu(null)}
     >
       <section className="captura-panel" aria-label="Captura queue">
+        <div className="queue-view" inert={captureRequest !== null}>
         <QueueHeader
           query={query}
           onQueryChange={setQuery}
@@ -416,6 +434,10 @@ export default function App() {
             </>
           )}
         </footer>
+        </div>
+        {captureRequest ? <Suspense fallback={<div className="sheet-backdrop capture-backdrop" role="status">Loading capture…</div>}>
+          <CaptureSheet request={captureRequest} shortcuts={appSettings.shortcuts} onClose={closeDetail} />
+        </Suspense> : null}
       </section>
 
       {contextMenu?.kind === "image" ? <ImageImportMenu x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)} onChoose={() => { setContextMenu(null); void imageImport.chooseImages(); }} onPaste={() => { setContextMenu(null); void imageImport.pasteImage(); }} /> : null}

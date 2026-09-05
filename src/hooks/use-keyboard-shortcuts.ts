@@ -8,6 +8,7 @@ import type { CaptureItem, KeyboardShortcutSettings } from "../types";
 type KeyboardShortcutDeps = {
   shortcuts: KeyboardShortcutSettings;
   blocked: boolean;
+  suspended?: boolean;
   dismissTop: () => void;
   openSettings: () => void;
   onEdit: (item: CaptureItem) => void;
@@ -26,6 +27,7 @@ type KeyboardShortcutDeps = {
 export function useKeyboardShortcuts({
   shortcuts,
   blocked,
+  suspended = false,
   dismissTop,
   openSettings,
   onEdit,
@@ -41,6 +43,7 @@ export function useKeyboardShortcuts({
   handleDeleteSelected,
 }: KeyboardShortcutDeps) {
   useEffect(() => {
+    if (suspended) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
       if (matchesShortcut(event, shortcuts.dismiss)) {
@@ -141,6 +144,7 @@ export function useKeyboardShortcuts({
     copySelected,
     dismissTop,
     blocked,
+    suspended,
     handleDeleteSelected,
     handlePaste,
     markSelectedDone,

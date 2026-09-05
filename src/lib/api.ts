@@ -3,7 +3,6 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
   CaptureItem,
-  CaptureDetailRequest,
   CapturesChangedEvent,
   CopyMode,
   CopyResult,
@@ -24,7 +23,6 @@ const demoSectionsKey = "captura.demo.sections.v1";
 const demoSettingsKey = "captura.demo.settings.v1";
 const demoAccessibilitySetupSeenKey = "captura.demo.accessibility-setup-seen.v1";
 const demoRevisionKey = "captura.demo.revision.v1";
-const demoDetailKey = "captura.demo.detail.v1";
 
 function demoRevision() {
   return Number(localStorage.getItem(demoRevisionKey) ?? 0);
@@ -608,42 +606,10 @@ export async function onHudCapture(
   );
 }
 
-export async function openCaptureDetail(request: CaptureDetailRequest) {
-  if (isTauriRuntime()) return invoke<void>("open_capture_detail", request);
-  localStorage.setItem(demoDetailKey, JSON.stringify({ ...request, requestedAt: Date.now() }));
-  const detail = window.open("?detail=1", "captura-detail", "width=760,height=600");
-  if (!detail) throw new Error("Allow the preview window to read this capture.");
-  detail.focus();
-}
-
-export async function getDetailRequest(): Promise<CaptureDetailRequest | null> {
-  if (isTauriRuntime()) return invoke<CaptureDetailRequest | null>("get_detail_request");
-  return JSON.parse(localStorage.getItem(demoDetailKey) ?? "null") as CaptureDetailRequest | null;
-}
-
 export async function getCaptureDetails(ids: string[]): Promise<CaptureItem[]> {
   if (isTauriRuntime()) return invoke<CaptureItem[]>("get_capture_details", { ids });
   const items = new Map(readDemoItems().map((item) => [item.id, item]));
   return ids.flatMap((id) => items.has(id) ? [items.get(id)!] : []);
-}
-
-export async function closeCaptureDetail() {
-  if (isTauriRuntime()) return invoke<void>("close_capture_detail");
-  window.close();
-}
-
-export async function onDetailRequest(handler: (request: CaptureDetailRequest) => void): Promise<UnlistenFn> {
-  if (isTauriRuntime()) return listen<CaptureDetailRequest>("captura://detail-request", (event) => handler(event.payload));
-  const storage = (event: StorageEvent) => {
-    if (event.key === demoDetailKey && event.newValue) handler(JSON.parse(event.newValue) as CaptureDetailRequest);
-  };
-  window.addEventListener("storage", storage);
-  return () => window.removeEventListener("storage", storage);
-}
-
-export async function onDetailCloseRequested(handler: () => void): Promise<UnlistenFn> {
-  if (isTauriRuntime()) return listen("captura://detail-close-requested", handler);
-  return () => undefined;
 }
 
 export async function onCapturesChanged(handler: (event: CapturesChangedEvent) => void): Promise<UnlistenFn> {

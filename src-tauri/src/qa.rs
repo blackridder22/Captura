@@ -99,16 +99,10 @@ fn execute(app: &AppHandle, request: &Value, directory: &std::path::Path) -> Res
             crate::present_main_window(app, false);
             Ok(json!(true))
         }
-        "detail" => {
-            let ids = serde_json::from_value(request["ids"].clone()).map_err(|e| e.to_string())?;
-            let mode =
-                serde_json::from_value(request["mode"].clone()).map_err(|e| e.to_string())?;
-            tauri::async_runtime::block_on(crate::detail::open_capture_detail(
-                app.clone(),
-                ids,
-                mode,
-            ))?;
-            Ok(json!(true))
+        "webview-windows" => {
+            let mut labels: Vec<_> = app.webview_windows().into_keys().collect();
+            labels.sort();
+            Ok(json!({"count": labels.len(), "labels": labels}))
         }
         "geometry" => {
             let window = app.get_webview_window(label).ok_or("Window missing")?;

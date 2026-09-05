@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { closeCaptureDetail, getCaptureDetails, getDetailRequest, onCapturesChanged, onDetailCloseRequested, onDetailRequest, updateItem } from "../lib/api";
+import { getCaptureDetails, onCapturesChanged, updateItem } from "../lib/api";
 import type { CaptureDetailRequest, CaptureItem, ItemKind } from "../types";
 import { compareCaptureTimestamps } from "../lib/queue-reconciliation";
 
@@ -27,8 +27,10 @@ function selectDetail(state: DetailState, index: number, mode: "preview" | "edit
   return { ...state, index, base, content: base?.content ?? "", kind: base?.kind ?? "note", mode, tab: mode === "edit" ? "source" : "preview", loading: false, error: "", pending: null };
 }
 
-export function useCaptureDetail() {
-  const [state, setState] = useState<DetailState>(emptyState);
+export function useCaptureDetail(openRequest: CaptureDetailRequest, onClose: () => void) {
+  const [state, setState] = useState<DetailState>(() => ({ ...emptyState(), mode: openRequest.mode, loading: true }));
+  const closePanel = useRef(onClose);
+  closePanel.current = onClose;
   const current = useRef(state);
   const loadSequence = useRef(0);
   const eventRevision = useRef(-1);
@@ -42,13 +44,11 @@ export function useCaptureDetail() {
 
   const perform = useCallback(async (intent: DetailIntent) => {
     if (intent.type === "close") {
-      try {
-        await closeCaptureDetail();
-        loadSequence.current += 1;
-        loadChanges.current.clear();
-        loadIds.current.clear();
-        commit(emptyState);
-      } catch (error) { commit((value) => ({ ...value, error: String(error) })); }
+      loadSequence.current += 1;
+      loadChanges.current.clear();
+      loadIds.current.clear();
+      commit(emptyState);
+      closePanel.current();
       return;
     }
     if (intent.type === "navigate" || intent.type === "preview") {
@@ -109,16 +109,9 @@ export function useCaptureDetail() {
 
   useEffect(() => {
     let disposed = false;
-    let requestReceived = false;
     const stops: (() => void)[] = [];
     const retain = (stop: () => void) => { if (disposed) stop(); else stops.push(stop); };
     const subscriptions = [
-      onDetailRequest((detail) => {
-        if (disposed) return;
-        requestReceived = true;
-        request({ type: "request", request: detail });
-      }).then(retain),
-      onDetailCloseRequested(() => { if (!disposed) request({ type: "close" }); }).then(retain),
       onCapturesChanged((event) => {
         if (disposed || event.revision <= eventRevision.current) return;
         eventRevision.current = event.revision;
@@ -137,17 +130,14 @@ export function useCaptureDetail() {
         });
       }).then(retain),
     ];
-    // Subscribe first: the native window is reusable and the open request may
-    // arrive before or after this webview's first render.
-    void Promise.all(subscriptions).then(async () => {
-      if (disposed || requestReceived) return;
-      const initial = await getDetailRequest();
-      if (!disposed && !requestReceived && initial) request({ type: "request", request: initial });
+    // Subscribe before loading so edits or deletions during the read are retained.
+    void Promise.all(subscriptions).then(() => {
+      if (!disposed) request({ type: "request", request: openRequest });
     }).catch((error) => { if (!disposed) commit((value) => ({ ...value, error: String(error) })); });
     return () => { disposed = true; loadSequence.current += 1; stops.forEach((stop) => stop()); };
-  }, [commit, request]);
+  }, [commit, request, openRequest]);
 
-  const unavailable = Boolean(state.ids.length && !state.items.has(state.ids[state.index]!));
+  const unavailable = Boolean(!state.loading && state.ids.length && !state.items.has(state.ids[state.index]!));
   return {
     ...state,
     dirty: detailIsDirty(state),
