@@ -9,7 +9,7 @@ import { useImageImport } from "./use-image-import";
 let completed: (result: ImageImportResult) => void;
 let captureError: (message: string) => void;
 vi.mock("../lib/api", () => ({
-  chooseImageFiles: vi.fn(), importImageFiles: vi.fn(), pasteImageFromClipboard: vi.fn(),
+  chooseImageFiles: vi.fn(), pasteImageFromClipboard: vi.fn(),
   onImageImportCompleted: vi.fn(async (handler) => { completed = handler; return vi.fn(); }),
   onCaptureError: vi.fn(async (handler) => { captureError = handler; return vi.fn(); }),
 }));
@@ -58,10 +58,10 @@ describe("image import requests and result feedback", () => {
   it("keeps partial successes, every issue and every warning in one result", async () => {
     const issues = [{ index: 1, name: "broken.png", code: "decode", message: "The image could not be decoded." }];
     const warnings = [{ index: 2, name: "animated.gif", code: "first_frame", message: "Only the first frame was captured." }];
-    vi.mocked(api.importImageFiles).mockImplementation(async (input) => batch(input.requestId, { issues, warnings }));
+    vi.mocked(api.chooseImageFiles).mockImplementation(async (input) => batch(input.requestId, { issues, warnings }));
     await mount("unfiled");
-    await act(async () => hook.importPaths(["first.png", "broken.png", "animated.gif"]));
-    expect(api.importImageFiles).toHaveBeenCalledWith({ requestId: expect.any(String), sectionId: null, paths: ["first.png", "broken.png", "animated.gif"] });
+    await act(async () => hook.chooseImages());
+    expect(api.chooseImageFiles).toHaveBeenCalledWith({ requestId: expect.any(String), sectionId: null });
     expect(hook.result).toMatchObject({ items: [image], issues, warnings });
     expect(success).toHaveBeenCalledOnce();
     expect(notify).not.toHaveBeenCalled();

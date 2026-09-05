@@ -2262,29 +2262,6 @@ kbd {
   border: 1px solid var(--line);
 }
 
-.drop-overlay {
-  position: fixed;
-  inset: 10px;
-  z-index: 70;
-  display: grid;
-  place-items: center;
-  border-radius: 14px;
-  border: 1.5px dashed var(--accent);
-  background: rgba(240, 139, 100, 0.08);
-  pointer-events: none;
-  animation: toast-in 140ms ease-out;
-}
-
-.drop-overlay span {
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: var(--surface-strong);
-  border: 1px solid var(--line-strong);
-  color: var(--accent-strong);
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .sheet-kind-switcher[data-static="true"] {
   color: var(--muted);
   font-size: 12px;

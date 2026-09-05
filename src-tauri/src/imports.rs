@@ -18,22 +18,23 @@ use std::{
 };
 use tauri::{AppHandle, Manager};
 
-pub struct NativeInteraction(AppHandle);
-impl NativeInteraction {
-    pub fn begin(app: &AppHandle) -> Self {
+// Keep the panel alive while the native image chooser owns keyboard focus.
+struct ImagePickerInteraction(AppHandle);
+impl ImagePickerInteraction {
+    fn begin(app: &AppHandle) -> Self {
         app.state::<AppState>()
-            .native_interactions
+            .open_image_pickers
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Self(app.clone())
     }
 }
-impl Drop for NativeInteraction {
+impl Drop for ImagePickerInteraction {
     fn drop(&mut self) {
         self.0
             .state::<AppState>()
-            .native_interactions
+            .open_image_pickers
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-        crate::finish_native_interaction(&self.0);
+        crate::finish_image_picker(&self.0);
     }
 }
 
@@ -109,33 +110,12 @@ async fn import(
 }
 
 #[tauri::command]
-pub async fn import_image_files(
-    app: AppHandle,
-    request_id: String,
-    paths: Vec<String>,
-    section_id: Option<String>,
-) -> Result<ImportBatchResult<CaptureItem>, String> {
-    import(
-        app,
-        ImportRequest {
-            request_id,
-            section_id,
-            inputs: paths
-                .into_iter()
-                .map(|path| ImageInput::File(PathBuf::from(path)))
-                .collect(),
-        },
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn choose_image_files(
     app: AppHandle,
     request_id: String,
     section_id: Option<String>,
 ) -> Result<ImportBatchResult<CaptureItem>, String> {
-    let interaction = NativeInteraction::begin(&app);
+    let interaction = ImagePickerInteraction::begin(&app);
     let (sender, receiver) = mpsc::channel();
     app.run_on_main_thread(move || {
         let Some(mtm) = objc2::MainThreadMarker::new() else {

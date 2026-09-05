@@ -145,7 +145,7 @@ struct AppState {
     database: Database,
     image_imports: image_import::ImageImportService,
     image_cleanup_started: AtomicBool,
-    native_interactions: AtomicUsize,
+    open_image_pickers: AtomicUsize,
     changes: Mutex<u64>,
     detail_request: Mutex<Option<detail::DetailRequest>>,
     previous_application: Mutex<Option<ActiveApplication>>,
@@ -186,7 +186,7 @@ impl AppState {
             database,
             image_imports: image_import::ImageImportService::default(),
             image_cleanup_started: AtomicBool::new(false),
-            native_interactions: AtomicUsize::new(0),
+            open_image_pickers: AtomicUsize::new(0),
             changes: Mutex::new(0),
             detail_request: Mutex::new(None),
             previous_application: Mutex::new(None),
@@ -1152,11 +1152,11 @@ fn capture_clipboard(app: &AppHandle) {
     }
 }
 
-fn finish_native_interaction(app: &AppHandle) {
+fn finish_image_picker(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let state = handle.state::<AppState>();
-        if state.native_interactions.load(Ordering::Acquire) != 0
+        if state.open_image_pickers.load(Ordering::Acquire) != 0
             || state.keep_open.load(Ordering::Relaxed)
         {
             return;
@@ -1430,7 +1430,7 @@ pub fn run() {
                 if *focused {
                     state.main_window_has_focused.store(true, Ordering::Relaxed);
                 } else if !state.keep_open.load(Ordering::Relaxed)
-                    && state.native_interactions.load(Ordering::Acquire) == 0
+                    && state.open_image_pickers.load(Ordering::Acquire) == 0
                     && state.main_window_has_focused.swap(false, Ordering::Relaxed)
                 {
                     let _ = window.hide();
@@ -1450,7 +1450,6 @@ pub fn run() {
             toggle_item,
             delete_item,
             copy_items,
-            imports::import_image_files,
             imports::choose_image_files,
             imports::paste_image_from_clipboard,
             imports::ensure_image_thumbnail,

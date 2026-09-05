@@ -415,13 +415,6 @@ export async function mergeItems(ids: string[]) {
   return merged;
 }
 
-export async function importImageFiles(input: ImageImportInput & { paths: string[] }): Promise<ImageImportResult> {
-  if (isTauriRuntime()) {
-    return invoke<ImageImportResult>("import_image_files", input);
-  }
-  throw new Error("Open Captura to import image files.");
-}
-
 export async function chooseImageFiles(input: ImageImportInput): Promise<ImageImportResult> {
   if (isTauriRuntime()) return invoke<ImageImportResult>("choose_image_files", input);
   throw new Error("Open Captura to choose image files.");

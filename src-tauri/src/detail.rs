@@ -48,6 +48,7 @@ pub async fn open_capture_detail(
         .inner_size(760.0, 600.0)
         .min_inner_size(560.0, 420.0)
         .resizable(true)
+        .disable_drag_drop_handler()
         .visible(false)
         .skip_taskbar(true)
         .build()

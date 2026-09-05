@@ -1,4 +1,4 @@
-"""Verify shared image commands through the packaged WKWebView/Tauri runtime."""
+"""Verify the packaged image service through opt-in QA and clipboard IPC."""
 import hashlib
 import json
 from pathlib import Path
@@ -10,7 +10,7 @@ import time
 
 root = Path(__file__).resolve().parent.parent
 control = Path(sys.argv[1]).resolve()
-report = {'layer': 'packaged WKWebView + native ImageIO + isolated SQLite', 'checks': {}}
+report = {'layer': 'packaged image service through isolated QA; clipboard through WKWebView IPC', 'checks': {}}
 
 def qa(action, **fields):
     p = subprocess.run([sys.executable, str(root/'script/qa.py'), str(control)], input=json.dumps({'action':action, **fields}), text=True, capture_output=True, check=True)
@@ -39,7 +39,7 @@ qa('show')
 wait("!!document.querySelector('[aria-label=\"Add image\"]')")
 section=invoke('create_section',{'name':'Native image checks'})
 paths=[str(fixtures/name) for name in ['large.png','rotated.jpg','first-page.tiff','small.heic','alpha.webp','first-frame.gif','small.bmp']]+[str(fixtures/'missing.png')]
-result=invoke('import_image_files',{'requestId':'native-images-batch','sectionId':section['id'],'paths':paths})
+result=qa('import-images',requestId='native-images-batch',sectionId=section['id'],paths=paths)
 assert len(result['items'])==7 and len(result['issues'])==1 and len(result['warnings'])==2,result
 assert all(x['sectionId']==section['id'] for x in result['items'])
 assert [x['content'] for x in result['items']]==['large','rotated','first-page','small','alpha','first-frame','small']
@@ -54,7 +54,7 @@ snapshot=invoke('snapshot_queue',{})
 assert [x['id'] for x in snapshot['items'] if x['sectionId']==section['id']]==[x['id'] for x in result['items']]
 report['checks']['input_order_survives_db_reload']=True
 invoke('delete_section',{'id':section['id']})
-fallback=invoke('import_image_files',{'requestId':'native-section-fallback','sectionId':section['id'],'paths':[str(fixtures/'alpha.png')]})
+fallback=qa('import-images',requestId='native-section-fallback',sectionId=section['id'],paths=[str(fixtures/'alpha.png')])
 assert fallback['items'][0]['sectionId'] is None
 assert fallback['warnings'][0]['code']=='section_deleted'
 report['checks']['deleted_section_falls_back']=True
@@ -65,7 +65,7 @@ try:
     assert len(copied['items'])==2 and not copied['issues']
     report['checks']['copied_local_file_urls']=True
 finally: qa('clipboard',operation='restore')
-limits=invoke('import_image_files',{'requestId':'native-limit','sectionId':None,'paths':[str(fixtures/'alpha.png')]*21})
+limits=qa('import-images',requestId='native-limit',sectionId=None,paths=[str(fixtures/'alpha.png')]*21)
 assert not limits['items'] and limits['issues'][0]['code']=='too_many_files'
 report['checks']['batch_limit_is_visible_error']=True
 report['pass']=all(report['checks'].values())

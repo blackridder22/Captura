@@ -60,6 +60,27 @@ pub fn start(app: AppHandle) {
 fn execute(app: &AppHandle, request: &Value, directory: &std::path::Path) -> Result<Value, String> {
     let label = request["window"].as_str().unwrap_or("main");
     match request["action"].as_str().unwrap_or("") {
+        "import-images" => {
+            let paths: Vec<String> = serde_json::from_value(request["paths"].clone())
+                .map_err(|error| error.to_string())?;
+            let section_id: Option<String> = serde_json::from_value(request["sectionId"].clone())
+                .map_err(|error| error.to_string())?;
+            let request_id = request["requestId"].as_str().ok_or("Request ID missing")?;
+            let result = crate::imports::import_blocking(
+                app,
+                crate::image_import::ImportRequest {
+                    request_id: request_id.to_string(),
+                    section_id,
+                    inputs: paths
+                        .into_iter()
+                        .map(|path| crate::image_import::ImageInput::File(PathBuf::from(path)))
+                        .collect(),
+                },
+                None,
+                None,
+            )?;
+            serde_json::to_value(result).map_err(|error| error.to_string())
+        }
         "eval" => {
             let window = app.get_webview_window(label).ok_or("Window missing")?;
             let script = request["script"].as_str().ok_or("Script missing")?;

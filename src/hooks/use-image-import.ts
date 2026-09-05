@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { chooseImageFiles, importImageFiles, onCaptureError, onImageImportCompleted, pasteImageFromClipboard } from "../lib/api";
+import { chooseImageFiles, onCaptureError, onImageImportCompleted, pasteImageFromClipboard } from "../lib/api";
 import type { ImageImportInput, ImageImportResult, SectionFilter } from "../types";
 import type { ToastTone } from "./use-notify";
 
@@ -55,6 +55,5 @@ export function useImageImport({ sectionFilter, notify, onSuccess }: { sectionFi
 
   const chooseImages = useCallback(() => run(chooseImageFiles), [run]);
   const pasteImage = useCallback(() => run(pasteImageFromClipboard), [run]);
-  const importPaths = useCallback((paths: string[]) => run((input) => importImageFiles({ ...input, paths })), [run]);
-  return { busy, result, chooseImages, pasteImage, importPaths, dismissResult: () => setResult(null) };
+  return { busy, result, chooseImages, pasteImage, dismissResult: () => setResult(null) };
 }

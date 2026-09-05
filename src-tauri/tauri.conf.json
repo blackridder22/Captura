@@ -14,6 +14,7 @@
     "windows": [
       {
         "label": "main",
+        "dragDropEnabled": false,
         "title": "Captura",
         "acceptFirstMouse": true,
         "width": 430,
@@ -36,6 +37,7 @@
       },
       {
         "label": "capture-hud",
+        "dragDropEnabled": false,
         "title": "Captured",
         "url": "index.html?hud=1",
         "width": 360,

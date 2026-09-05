@@ -6,7 +6,6 @@ import { shortcutLabel } from "./lib/shortcuts";
 import { useAppEvents } from "./hooks/use-app-events";
 import { useBulkActions } from "./hooks/use-bulk-actions";
 import { useComposer } from "./hooks/use-composer";
-import { useFileDrop } from "./hooks/use-file-drop";
 import { useImageImport } from "./hooks/use-image-import";
 import { useImageThumbnails } from "./hooks/use-image-thumbnails";
 import { useItemActions } from "./hooks/use-item-actions";
@@ -108,7 +107,6 @@ export default function App() {
   } = useUpdater({ notify });
   const showImportedImages = useCallback(() => setFilter("inbox"), [setFilter]);
   const imageImport = useImageImport({ sectionFilter, notify, onSuccess: showImportedImages });
-  const { dropping } = useFileDrop({ notify, importPaths: imageImport.importPaths, busy: imageImport.busy });
   const queueRef = useRef<HTMLElement>(null);
   const failedThumbnails = useImageThumbnails(queueRef, visibleItems, applyUpdatedItems);
   useEffect(() => {
@@ -232,7 +230,6 @@ export default function App() {
   return (
     <main
       className="app-frame"
-      data-dropping={dropping}
       onMouseDown={() => contextMenu && setContextMenu(null)}
     >
       <section className="captura-panel" aria-label="Captura queue">
@@ -485,12 +482,6 @@ export default function App() {
           onCheckUpdates={() => checkForUpdates(false)}
           onInstallUpdate={installUpdate}
         />
-      ) : null}
-
-      {dropping ? (
-        <div className="drop-overlay" aria-hidden="true">
-          <span>Drop images to capture</span>
-        </div>
       ) : null}
 
       {toast ? (
