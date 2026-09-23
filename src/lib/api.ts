@@ -140,6 +140,7 @@ export async function snapshotQueue(): Promise<QueueSnapshot> {
     items: readDemoItems(),
     sections: readDemoSections(),
     settings: readDemoSettings(),
+    storageWarning: null,
   };
 }
 

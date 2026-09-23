@@ -2281,6 +2281,18 @@ kbd {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+.storage-warning {
+  margin: 0 14px 8px;
+  padding: 9px 11px;
+  border: 1px solid rgba(241, 123, 114, 0.45);
+  border-radius: 10px;
+  background: rgba(241, 123, 114, 0.1);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .permission-banner-icon {
   display: grid;
   place-items: center;

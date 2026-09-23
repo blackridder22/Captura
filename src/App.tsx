@@ -41,6 +41,7 @@ export default function App() {
     sections,
     loading,
     appSettings,
+    storageWarning,
     setAppSettings,
     refreshData,
     prependItem,
@@ -260,6 +261,8 @@ export default function App() {
           searchShortcut={appSettings.shortcuts.search}
           closeShortcut={appSettings.shortcuts.close}
         />
+
+        {storageWarning ? <p className="storage-warning" role="alert">{storageWarning}</p> : null}
 
         {permissionExperience === "welcome" && permissions ? (
           <WelcomeSetup

@@ -45,6 +45,9 @@ pub fn import_blocking(
     source_bundle_id: Option<&str>,
 ) -> Result<ImportBatchResult<CaptureItem>, String> {
     let state = app.state::<AppState>();
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
+    }
     let mut result =
         state
             .image_imports

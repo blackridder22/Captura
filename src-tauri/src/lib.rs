@@ -7,6 +7,7 @@ mod platform;
 mod qa;
 #[cfg(target_os = "macos")]
 mod smoke;
+mod storage;
 
 use std::{
     path::PathBuf,
@@ -19,8 +20,9 @@ use std::{
 };
 
 use database::{CaptureItem, Database, DatabaseError, ItemKind, ItemStatus, Section};
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use serde::{Deserialize, Serialize};
+use storage::ProtectedStorage;
 use tauri::{
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -143,6 +145,8 @@ struct AppSettings {
 
 struct AppState {
     database: Database,
+    storage: ProtectedStorage,
+    storage_warning: Mutex<Option<String>>,
     image_imports: image_import::ImageImportService,
     image_cleanup_started: AtomicBool,
     open_image_pickers: AtomicUsize,
@@ -159,6 +163,7 @@ struct AppState {
 impl AppState {
     fn new() -> Result<Self, String> {
         let database_path = database_path()?;
+        let storage = ProtectedStorage::prepare(database_path.clone(), backup_directory_path()?)?;
         let database_existed = database_path.exists();
         let database = Database::open(&database_path).map_err(|error| error.to_string())?;
         let stored_shortcuts = database
@@ -181,8 +186,18 @@ impl AppState {
             .map_err(|error| error.to_string())?
             .is_some_and(|value| value == "true");
         let accessibility_setup_seen = load_accessibility_setup_seen(&database, database_existed)?;
+        let storage_warning = if storage.blocked() {
+            Some(storage.issue_message())
+        } else {
+            storage
+                .snapshot(&database)
+                .err()
+                .map(|error| format!("Local backup failed: {error}"))
+        };
         Ok(Self {
             database,
+            storage,
+            storage_warning: Mutex::new(storage_warning),
             image_imports: image_import::ImageImportService::default(),
             image_cleanup_started: AtomicBool::new(false),
             open_image_pickers: AtomicUsize::new(0),
@@ -213,6 +228,7 @@ struct QueueSnapshot {
     items: Vec<CaptureItem>,
     sections: Vec<Section>,
     settings: AppSettings,
+    storage_warning: Option<String>,
 }
 
 // A snapshot and each write/publication share one ordering lock. Events may
@@ -222,11 +238,15 @@ fn mutate_items<T>(
     state: &AppState,
     action: impl FnOnce(&Database) -> Result<(T, Vec<CaptureItem>, Vec<String>), String>,
 ) -> Result<T, String> {
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
+    }
     let mut revision = state
         .changes
         .lock()
         .map_err(|_| "Capture state unavailable")?;
     let (result, upserts, deleted_ids) = action(&state.database)?;
+    snapshot_storage(state, Some(app), "Capture saved");
     *revision += 1;
     let _ = app.emit(
         "captura://captures-changed",
@@ -237,6 +257,20 @@ fn mutate_items<T>(
         },
     );
     Ok(result)
+}
+
+fn snapshot_storage(state: &AppState, app: Option<&AppHandle>, completed: &str) {
+    let warning = state
+        .storage
+        .snapshot(&state.database)
+        .err()
+        .map(|error| format!("{completed}, but local backup failed: {error}"));
+    if let Ok(mut current) = state.storage_warning.lock() {
+        *current = warning.clone();
+    }
+    if let (Some(app), Some(warning)) = (app, warning) {
+        report_capture_error(app, warning);
+    }
 }
 
 fn mutate_one(
@@ -258,6 +292,11 @@ async fn snapshot_queue(app: AppHandle) -> Result<QueueSnapshot, String> {
             .changes
             .lock()
             .map_err(|_| "Capture state unavailable")?;
+        let storage_warning = state
+            .storage_warning
+            .lock()
+            .map_err(|_| "Storage status unavailable")?
+            .clone();
         Ok(QueueSnapshot {
             revision: *revision,
             items: state
@@ -269,6 +308,7 @@ async fn snapshot_queue(app: AppHandle) -> Result<QueueSnapshot, String> {
                 .list_sections()
                 .map_err(|error| error.to_string())?,
             settings: current_app_settings(&state)?,
+            storage_warning,
         })
     })
     .await
@@ -377,6 +417,25 @@ fn database_path() -> Result<PathBuf, String> {
     let directories = ProjectDirs::from("com", "Auto Scale Agency", "Captura")
         .ok_or_else(|| "could not resolve Captura's application data directory".to_string())?;
     Ok(directories.data_dir().join("captura.db"))
+}
+
+fn backup_directory_path() -> Result<PathBuf, String> {
+    if std::env::var("CAPTURA_TEST_MODE").as_deref() == Ok("1") {
+        let data = database_path()?;
+        return Ok(data
+            .parent()
+            .ok_or("Test data directory missing")?
+            .with_extension("backup"));
+    }
+    let base = BaseDirs::new().ok_or("could not resolve the home directory")?;
+    #[cfg(target_os = "macos")]
+    {
+        Ok(base.home_dir().join("Library").join("Captura Backups"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(base.data_dir().join("Captura Backups"))
+    }
 }
 
 fn infer_kind(content: &str) -> ItemKind {
@@ -769,6 +828,9 @@ fn permission_status(state: State<'_, AppState>) -> PermissionStatus {
 
 #[tauri::command]
 fn mark_accessibility_setup_seen(state: State<'_, AppState>) -> Result<PermissionStatus, String> {
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
+    }
     state
         .database
         .set_setting(ACCESSIBILITY_SETUP_SEEN_SETTING, "true")
@@ -776,6 +838,7 @@ fn mark_accessibility_setup_seen(state: State<'_, AppState>) -> Result<Permissio
     state
         .accessibility_setup_seen
         .store(true, Ordering::Relaxed);
+    snapshot_storage(&state, None, "Setting saved");
     Ok(current_permission_status(&state))
 }
 
@@ -796,11 +859,16 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 }
 
 fn persist_shortcuts(state: &AppState, shortcuts: &KeyboardShortcuts) -> Result<(), String> {
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
+    }
     let serialized = serde_json::to_string(shortcuts).map_err(|error| error.to_string())?;
     state
         .database
         .set_setting(SHORTCUTS_SETTING, &serialized)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    snapshot_storage(state, None, "Setting saved");
+    Ok(())
 }
 
 #[tauri::command]
@@ -919,11 +987,15 @@ fn reset_shortcuts(app: AppHandle, state: State<'_, AppState>) -> Result<AppSett
 
 #[tauri::command]
 fn set_keep_open(state: State<'_, AppState>, keep_open: bool) -> Result<AppSettings, String> {
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
+    }
     state
         .database
         .set_setting(KEEP_OPEN_SETTING, if keep_open { "true" } else { "false" })
         .map_err(|error| error.to_string())?;
     state.keep_open.store(keep_open, Ordering::Relaxed);
+    snapshot_storage(&state, None, "Setting saved");
     current_app_settings(&state)
 }
 

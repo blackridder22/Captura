@@ -11,6 +11,7 @@ export function useQueueData() {
   const [sections, setSections] = useState<Section[]>([]);
   const [loading, setLoading] = useState(true);
   const [appSettings, setAppSettings] = useState<AppSettings>(initialSettings);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const itemsRef = useRef(items);
   const revision = useRef(-1);
   const mutationEpoch = useRef(0);
@@ -56,6 +57,7 @@ export function useQueueData() {
         setItems(snapshot.items);
         setSections(snapshot.sections);
         setAppSettings(snapshot.settings);
+        setStorageWarning(snapshot.storageWarning);
         break;
       }
     }
@@ -90,5 +92,5 @@ export function useQueueData() {
   }, []);
   const sectionNames = useMemo(() => new Map(sections.map((section) => [section.id, section.name])), [sections]);
 
-  return { items, sections, loading, appSettings, setAppSettings, refreshData, prependItem: prependDeduped, prependDeduped, prependReplacing, replaceItem, removeItems, applyUpdatedItems, addSection, removeSection, sectionNames };
+  return { items, sections, loading, appSettings, storageWarning, setAppSettings, refreshData, prependItem: prependDeduped, prependDeduped, prependReplacing, replaceItem, removeItems, applyUpdatedItems, addSection, removeSection, sectionNames };
 }

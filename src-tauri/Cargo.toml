@@ -18,7 +18,7 @@ chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
 html2markdown = "0.2"
 pulldown-cmark = "0.13"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [

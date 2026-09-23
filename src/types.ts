@@ -85,6 +85,7 @@ export type QueueSnapshot = {
   items: CaptureItem[];
   sections: Section[];
   settings: AppSettings;
+  storageWarning: string | null;
 };
 
 export type ImageImportInput = { requestId: string; sectionId: string | null };

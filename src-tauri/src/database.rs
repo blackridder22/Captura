@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, DatabaseName, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -215,6 +215,12 @@ pub struct Database {
 }
 
 impl Database {
+    pub fn backup_to(&self, path: &Path) -> Result<(), DatabaseError> {
+        let connection = self.connection()?;
+        connection.backup(DatabaseName::Main, path, None)?;
+        Ok(())
+    }
+
     pub fn open(path: &Path) -> Result<Self, DatabaseError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
