@@ -165,7 +165,12 @@ impl AppState {
         let database_path = database_path()?;
         let storage = ProtectedStorage::prepare(database_path.clone(), backup_directory_path()?)?;
         let database_existed = database_path.exists();
-        let database = Database::open(&database_path).map_err(|error| error.to_string())?;
+        let database = Database::open(&database_path).map_err(|error| {
+            let message = error.to_string();
+            storage.record_database_open_failure(&message);
+            message
+        })?;
+        storage.record_event("database_open_succeeded");
         let stored_shortcuts = database
             .setting(SHORTCUTS_SETTING)
             .map_err(|error| error.to_string())?;
@@ -260,6 +265,7 @@ fn mutate_items<T>(
 }
 
 fn snapshot_storage(state: &AppState, app: Option<&AppHandle>, completed: &str) {
+    state.storage.record_database_write();
     let warning = state
         .storage
         .snapshot(&state.database)
@@ -780,6 +786,9 @@ fn show_main_window(app: AppHandle) {
 
 #[tauri::command]
 fn quit_app(app: AppHandle) {
+    app.state::<AppState>()
+        .storage
+        .record_event("quit_requested");
     app.exit(0);
 }
 
@@ -1536,8 +1545,19 @@ pub fn run() {
             request_accessibility,
             open_accessibility_settings,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Captura");
+        .build(tauri::generate_context!())
+        .expect("error while building Captura")
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { .. } => {
+                app.state::<AppState>()
+                    .storage
+                    .record_event("exit_requested");
+            }
+            tauri::RunEvent::Exit => {
+                app.state::<AppState>().storage.finish_session();
+            }
+            _ => {}
+        });
 }
 
 #[cfg(test)]
