@@ -37,7 +37,7 @@ export function FilterTabs({
     const measure = () => {
       const tab = host.querySelector<HTMLElement>(`[data-filter="${active}"]`);
       if (!tab) return;
-      const inset = active === "trash" ? 8 : 18;
+      const inset = 2;
       const x = tab.offsetLeft + inset;
       const width = Math.max(tab.offsetWidth - inset * 2, 8);
       setIndicator((current) => ({ x, width, ready: current.ready || current.width > 0 }));

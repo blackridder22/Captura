@@ -2,7 +2,6 @@ import { LockKeyhole, Search, Settings2, X } from "lucide-react";
 import type { RefObject } from "react";
 import { shortcutLabel } from "../lib/shortcuts";
 import { Button } from "./ui/button";
-import { BrandMark } from "./brand-mark";
 
 type QueueHeaderProps = {
   query: string;
@@ -12,8 +11,12 @@ type QueueHeaderProps = {
   searchRef: RefObject<HTMLInputElement | null>;
   searchShortcut: string;
   closeShortcut: string;
+  openCount: number;
+  sectionCount: number;
 };
 
+/// Editorial header: the wordmark carries the brand, a status line replaces
+/// the icon badge, and search gets the full width underneath.
 export function QueueHeader({
   query,
   onQueryChange,
@@ -22,55 +25,56 @@ export function QueueHeader({
   searchRef,
   searchShortcut,
   closeShortcut,
+  openCount,
+  sectionCount,
 }: QueueHeaderProps) {
   return (
     <header className="queue-header">
-      <div className="brand-lockup">
-        <span className="brand-icon">
-          <BrandMark />
-        </span>
-        <div>
+      <div className="queue-header-row">
+        <div className="brand-lockup">
           <strong>Captura</strong>
           <span className="local-status">
+            <span>{openCount} open</span>
             <i />
-            Local only
-            <LockKeyhole size={11} strokeWidth={2} />
+            <span>{sectionCount} section{sectionCount === 1 ? "" : "s"}</span>
+            <i />
+            <span className="local-status-badge"><LockKeyhole size={10} strokeWidth={2} />Local only</span>
           </span>
+        </div>
+
+        <div className="header-actions">
+          <Button
+            variant="surface"
+            size="icon"
+            aria-label="Open settings"
+            onClick={onOpenSettings}
+          >
+            <Settings2 size={16} strokeWidth={1.8} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="panel-close-button"
+            aria-label="Close Captura"
+            title={`Close Captura (${shortcutLabel(closeShortcut)})`}
+            onClick={onClose}
+          >
+            <X size={15} strokeWidth={2} />
+          </Button>
         </div>
       </div>
 
       <label className="search-control">
-        <Search size={15} strokeWidth={1.9} />
+        <Search size={14} strokeWidth={2} />
         <input
           ref={searchRef}
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Search captures"
+          placeholder="Search captures, links and prompts"
           aria-label="Search captures"
         />
         <kbd>{shortcutLabel(searchShortcut)}</kbd>
       </label>
-
-      <div className="header-actions">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Open settings"
-          onClick={onOpenSettings}
-        >
-          <Settings2 size={17} strokeWidth={1.8} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="panel-close-button"
-          aria-label="Close Captura"
-          title={`Close Captura (${shortcutLabel(closeShortcut)})`}
-          onClick={onClose}
-        >
-          <X size={15} strokeWidth={2} />
-        </Button>
-      </div>
     </header>
   );
 }

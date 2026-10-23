@@ -9,8 +9,14 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 
 - Native popover footprint: 430 × 650 px.
 - One open list with separators; no dashboard cards.
-- Header, quick capture, filters (with a trailing Trash tab), sections, queue,
-  and keyboard footer.
+- Editorial header: the Captura wordmark with a status line (open count,
+  sections, Local only), settings and close at the right, and a full-width
+  search bar underneath.
+- Composer card with Prompt / Note / Link as a tab row (image button at its
+  end), then the text and Save.
+- Text filter tabs with a sliding underline and a trailing Trash tab; section
+  chips with live counts; two-line rows whose meta line starts with the mono
+  time; keyboard footer.
 - Capture page: one Notion-style page per capture with a Page | Source toggle.
 - Settings: General · Shortcuts · Editor · Trash · About.
 - Separate 360 × 92 px confirmation HUD (non-focusable).
@@ -31,9 +37,9 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 
 ## Type
 
-- Families: `--font-sans` for UI and capture text, `--font-mono` for Source,
-  code and key caps (both self-hosted, OFL; see `tokens.css` for the chosen
-  families). The system stack remains the fallback.
+- Families: Instrument Sans (`--font-sans`) for UI and capture text, JetBrains
+  Mono (`--font-mono`) for Source, code, times and key caps. Both are bundled
+  variable woff2 (OFL, latin subsets); the system stack remains the fallback.
 - Scale: 10 / 11 / 12 / 13 / 15 / 17 px (`--text-xs` … `--text-xl`). Nothing
   on screen is smaller than 10 px.
 - Capture text 13–13.5 px at 1.35 (queue) to 1.65 (page) line height; metadata

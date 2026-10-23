@@ -132,6 +132,10 @@ export const QueueItem = memo(function QueueItem({
           </div>
         )}
         <div className="item-meta">
+          <time className="row-time" dateTime={item.createdAt}>
+            {formatCaptureTime(item.createdAt)}
+          </time>
+          <i />
           <SourceIcon item={item} />
           <span>
             {item.sourceApp ??
@@ -144,7 +148,7 @@ export const QueueItem = memo(function QueueItem({
           {sectionName ? (
             <>
               <i />
-              <span>{sectionName}</span>
+              <span className="meta-section">{sectionName}</span>
             </>
           ) : null}
           {trashed ? (
@@ -155,10 +159,6 @@ export const QueueItem = memo(function QueueItem({
           ) : null}
         </div>
       </div>
-
-      <time className="row-time" dateTime={item.createdAt}>
-        {formatCaptureTime(item.createdAt)}
-      </time>
 
       {selected && trashed ? (
         <div

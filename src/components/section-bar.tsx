@@ -4,9 +4,12 @@ import type { Section, SectionFilter } from "../types";
 
 export type { SectionFilter };
 
+export type SectionCounts = { all: number; unfiled: number; bySection: ReadonlyMap<string, number> };
+
 type SectionBarProps = {
   sections: Section[];
   active: SectionFilter;
+  counts: SectionCounts;
   onChange: (section: SectionFilter) => void;
   onCreate: (name: string) => Promise<void>;
   onContextMenu: (
@@ -15,9 +18,11 @@ type SectionBarProps = {
   ) => void;
 };
 
+/// Sections as chips, each carrying its live count.
 export function SectionBar({
   sections,
   active,
+  counts,
   onChange,
   onCreate,
   onContextMenu,
@@ -37,13 +42,13 @@ export function SectionBar({
     <div className="section-bar" aria-label="Capture sections">
       <div className="section-scroll">
         <button data-active={active === "all"} onClick={() => onChange("all")}>
-          All
+          All<small>{counts.all}</small>
         </button>
         <button
           data-active={active === "unfiled"}
           onClick={() => onChange("unfiled")}
         >
-          Unfiled
+          Unfiled<small>{counts.unfiled}</small>
         </button>
         {sections.map((section) => (
           <button
@@ -62,7 +67,7 @@ export function SectionBar({
               onContextMenu(section, event);
             }}
           >
-            {section.name}
+            {section.name}<small>{counts.bySection.get(section.id) ?? 0}</small>
           </button>
         ))}
       </div>

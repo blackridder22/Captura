@@ -89,6 +89,7 @@ describe("section deletion interactions", () => {
     await act(async () => {
       root.render(
         <SectionBar
+          counts={{ all: 0, unfiled: 0, bySection: new Map() }}
           sections={[section]}
           active="all"
           onChange={vi.fn()}
@@ -98,8 +99,9 @@ describe("section deletion interactions", () => {
       );
     });
     const buttons = [...container.querySelectorAll("button")];
-    const all = buttons.find((button) => button.textContent === "All")!;
-    const research = buttons.find((button) => button.textContent === "Research")!;
+    // Chips carry a count after the name.
+    const all = buttons.find((button) => button.textContent?.startsWith("All"))!;
+    const research = buttons.find((button) => button.textContent?.startsWith("Research"))!;
 
     act(() =>
       all.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })),

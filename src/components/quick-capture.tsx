@@ -25,6 +25,8 @@ const kindOptions = [
   { kind: "link" as const, label: "Link", icon: Link2 },
 ];
 
+/// Composer card: the kind is a tab row on top (with the image button at its
+/// end), the text and Save sit below.
 export function QuickCapture({
   content,
   kind,
@@ -45,40 +47,40 @@ export function QuickCapture({
 
   return (
     <form className="quick-capture" onSubmit={submit}>
-      <textarea
-        ref={composerRef}
-        value={content}
-        onChange={(event) => onContentChange(event.target.value)}
-        onKeyDown={(event) => {
-          if (matchesShortcut(event.nativeEvent, saveShortcut)) {
-            event.preventDefault();
-            onSubmit();
-          }
-        }}
-        placeholder="Save a thought, prompt, link…"
-        aria-label="Capture a thought, prompt, or link"
-        rows={2}
-      />
+      <div className="composer-tabs" role="tablist" aria-label="Capture type">
+        {kindOptions.map(({ kind: option, label, icon: Icon }) => (
+          <button
+            type="button"
+            role="tab"
+            key={option}
+            data-active={kind === option}
+            aria-selected={kind === option}
+            onClick={() => onKindChange(option)}
+          >
+            <Icon size={12} strokeWidth={2} />
+            {label}
+          </button>
+        ))}
+        <span className="composer-tabs-spacer" />
+        <Button type="button" variant="ghost" size="icon" className="add-image-button" aria-label="Add image" title="Add image" aria-haspopup="menu" aria-expanded={imageMenuOpen} aria-busy={importingImages} disabled={importingImages} onClick={onAddImage}><ImagePlus size={15} /></Button>
+      </div>
 
-      <div className="composer-footer">
-        <div className="kind-switcher" aria-label="Capture type">
-          {kindOptions.map(({ kind: option, label, icon: Icon }) => (
-            <button
-              type="button"
-              key={option}
-              data-active={kind === option}
-              onClick={() => onKindChange(option)}
-              aria-pressed={kind === option}
-            >
-              <Icon size={12} strokeWidth={2} />
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <div className="composer-actions">
-          <Button type="button" variant="ghost" size="icon" className="add-image-button" aria-label="Add image" title="Add image" aria-haspopup="menu" aria-expanded={imageMenuOpen} aria-busy={importingImages} disabled={importingImages} onClick={onAddImage}><ImagePlus size={15} /></Button>
-          <Button
+      <div className="composer-body">
+        <textarea
+          ref={composerRef}
+          value={content}
+          onChange={(event) => onContentChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (matchesShortcut(event.nativeEvent, saveShortcut)) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          placeholder="Save a thought, prompt, link…"
+          aria-label="Capture a thought, prompt, or link"
+          rows={2}
+        />
+        <Button
           type="submit"
           variant="accent"
           size="sm"
@@ -86,8 +88,7 @@ export function QuickCapture({
         >
           {saving ? "Saving" : "Save"}
           <Kbd>{shortcutLabel(saveShortcut)}</Kbd>
-          </Button>
-        </div>
+        </Button>
       </div>
     </form>
   );

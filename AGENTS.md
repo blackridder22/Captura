@@ -16,8 +16,10 @@ notes, and follow-up prompts without breaking an AI-assisted workflow.
 ## Visual direction
 
 - Use the approved charcoal-and-copper concept under `docs/design/`.
-- Borrow component craft from Fragment: native SF typography, dark glass
-  surfaces, inset hairlines, compact controls, and short restrained motion.
+- Borrow component craft from Fragment: dark glass surfaces, inset hairlines,
+  compact controls, and short restrained motion. Type is Instrument Sans with
+  JetBrains Mono for Source and key caps, both bundled (see
+  `src/styles/tokens.css` and `fonts.css`).
 - Do not copy Fragment's cyan/green brand palette or visual-vault layout.
 - Avoid dashboard framing, card grids, decorative glows, and excessive pills.
 

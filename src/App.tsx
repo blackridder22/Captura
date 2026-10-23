@@ -1,5 +1,5 @@
 import { ArrowDown, ArrowUp, Inbox, Keyboard, ListChecks, Trash2 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { cleanupImageFiles, hideMainWindow, purgeExpiredTrash, quitApp } from "./lib/api";
 import type { CaptureDetailRequest, CaptureItem } from "./types";
 import { shortcutLabel } from "./lib/shortcuts";
@@ -69,6 +69,18 @@ export default function App() {
     counts,
   } = useQueueFilters(items);
   const inTrash = filter === "trash";
+  const sectionCounts = useMemo(() => {
+    const bySection = new Map<string, number>();
+    let all = 0;
+    let unfiled = 0;
+    for (const item of items) {
+      if (item.deletedAt !== null) continue;
+      all += 1;
+      if (item.sectionId) bySection.set(item.sectionId, (bySection.get(item.sectionId) ?? 0) + 1);
+      else unfiled += 1;
+    }
+    return { all, unfiled, bySection };
+  }, [items]);
   const {
     selectedId,
     selectedIds,
@@ -344,6 +356,8 @@ export default function App() {
           searchRef={searchRef}
           searchShortcut={appSettings.shortcuts.search}
           closeShortcut={appSettings.shortcuts.close}
+          openCount={counts.inbox}
+          sectionCount={sections.length}
         />
 
         {storageWarning ? <p className="storage-warning" role="alert">{storageWarning}</p> : null}
@@ -413,6 +427,7 @@ export default function App() {
           <SectionBar
             sections={sections}
             active={sectionFilter}
+            counts={sectionCounts}
             onChange={setSectionFilter}
             onCreate={handleCreateSection}
             onContextMenu={(section, event) => {
