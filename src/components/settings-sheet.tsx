@@ -4,15 +4,19 @@ import {
   Clipboard,
   DownloadCloud,
   FileCode2,
+  Info,
   Keyboard,
   LockKeyhole,
   LogOut,
   Pin,
   RotateCcw,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
+import { useState } from "react";
+import type { PresenceState } from "../hooks/use-presence";
 import type { UpdateStatus } from "../hooks/use-updater";
 import type {
   AppSettings,
@@ -26,18 +30,18 @@ import { trashRetentionLabel } from "../lib/items";
 import { ShortcutRecorder } from "./shortcut-recorder";
 import { Button } from "./ui/button";
 
+type SettingsSection = "general" | "shortcuts" | "editor" | "trash" | "about";
+
 type SettingsSheetProps = {
   permissions: PermissionStatus | null;
   settings: AppSettings;
+  trashCount: number;
+  presenceState?: PresenceState;
   onClose: () => void;
   onRequestAccessibility: () => Promise<void>;
-  onShortcutChange: (
-    action: ShortcutAction,
-    shortcut: string,
-  ) => Promise<void>;
+  onShortcutChange: (action: ShortcutAction, shortcut: string) => Promise<void>;
   onResetShortcuts: () => Promise<void>;
   onKeepOpenChange: (keepOpen: boolean) => Promise<void>;
-  trashCount: number;
   onTrashRetentionChange: (retention: TrashRetention) => Promise<void>;
   onDefaultCaptureViewChange: (view: CaptureView) => Promise<void>;
   onEmptyTrash: () => Promise<void>;
@@ -47,6 +51,14 @@ type SettingsSheetProps = {
   onCheckUpdates: () => Promise<void>;
   onInstallUpdate: () => Promise<void>;
 };
+
+const sections: { id: SettingsSection; label: string; icon: typeof Keyboard }[] = [
+  { id: "general", label: "General", icon: SlidersHorizontal },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
+  { id: "editor", label: "Editor", icon: FileCode2 },
+  { id: "trash", label: "Trash", icon: Trash2 },
+  { id: "about", label: "About", icon: Info },
+];
 
 const retentionOptions: { value: TrashRetention; label: string }[] = [
   { value: "immediate", label: "Now" },
@@ -76,15 +88,35 @@ function updateStatusLine(status: UpdateStatus) {
   }
 }
 
+function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+  return (
+    <div className="settings-segmented" role="radiogroup" aria-label={label}>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          data-active={value === option.value}
+          onClick={() => onChange(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsSheet({
   permissions,
   settings,
+  trashCount,
+  presenceState,
   onClose,
   onRequestAccessibility,
   onShortcutChange,
   onResetShortcuts,
   onKeepOpenChange,
-  trashCount,
   onTrashRetentionChange,
   onDefaultCaptureViewChange,
   onEmptyTrash,
@@ -94,250 +126,184 @@ export function SettingsSheet({
   onCheckUpdates,
   onInstallUpdate,
 }: SettingsSheetProps) {
-  const permissionsReady =
-    Boolean(
-      permissions?.accessibilityTrusted && permissions.postEventTrusted,
-    );
+  const [section, setSection] = useState<SettingsSection>("general");
+  const [confirmingEmpty, setConfirmingEmpty] = useState(false);
+  const permissionsReady = Boolean(permissions?.accessibilityTrusted && permissions.postEventTrusted);
 
   return (
-    <div className="sheet-backdrop" onMouseDown={onClose}>
+    <div className="sheet-backdrop" data-state={presenceState} onMouseDown={onClose}>
       <section
         className="settings-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
           <div>
             <span>Settings</span>
-            <strong>Make Captura work your way.</strong>
+            <strong id="settings-title">Make Captura work your way.</strong>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close settings"
-            onClick={onClose}
-          >
+          <Button variant="ghost" size="icon" aria-label="Close settings" onClick={onClose}>
             <X size={16} />
           </Button>
         </header>
 
-        <div className="settings-scroll">
-          <div className="settings-group-title">
-            <span>
-              <Keyboard size={13} />
-              Keyboard shortcuts
-            </span>
-            <button type="button" onClick={() => void onResetShortcuts()}>
-              <RotateCcw size={11} />
-              Restore defaults
-            </button>
-          </div>
-
-          <div className="shortcut-settings">
-            {shortcutActions.map(({ action, label, description }) => (
-              <div className="shortcut-setting" key={action}>
-                <div>
-                  <strong>{label}</strong>
-                  <p>{description}</p>
-                </div>
-                <ShortcutRecorder
-                  action={action}
-                  value={settings.shortcuts[action]}
-                  onChange={(shortcut) => onShortcutChange(action, shortcut)}
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="settings-group-title">
-            <span>Behavior</span>
-          </div>
-
-          <div className="settings-row">
-            <span className="settings-icon">
-              <Pin size={16} />
-            </span>
-            <div>
-              <strong>Keep Captura open</strong>
-              <p>
-                Ignore click-away and stay visible until{" "}
-                {shortcutLabel(settings.shortcuts.close)} or the × button.
-              </p>
-            </div>
+        <nav className="settings-nav" role="tablist" aria-label="Settings sections">
+          {sections.map(({ id, label, icon: Icon }) => (
             <button
+              key={id}
               type="button"
-              className="settings-switch"
-              role="switch"
-              aria-checked={settings.keepOpen}
-              data-checked={settings.keepOpen}
-              onClick={() => void onKeepOpenChange(!settings.keepOpen)}
+              role="tab"
+              aria-selected={section === id}
+              data-active={section === id}
+              onClick={() => setSection(id)}
             >
-              <i />
+              <Icon size={13} strokeWidth={1.9} />
+              <span>{label}</span>
             </button>
-          </div>
+          ))}
+        </nav>
 
-          <div className="settings-row">
-            <span className="settings-icon">
-              <Clipboard size={16} />
-            </span>
-            <div>
-              <strong>Capture clipboard</strong>
-              <p>
-                Also available anywhere via{" "}
-                {shortcutLabel(settings.shortcuts.captureClipboard)} — copy an
-                image or text, press it, captured.
-              </p>
-            </div>
-            <Button
-              variant="surface"
-              size="sm"
-              onClick={() => void onCaptureClipboard()}
-            >
-              Capture
-            </Button>
-          </div>
+        <div className="settings-scroll" role="tabpanel">
+          <div className="settings-section" key={section}>
+            {section === "general" ? (
+              <>
+                <div className="settings-row">
+                  <span className="settings-icon"><Pin size={16} /></span>
+                  <div>
+                    <strong>Keep Captura open</strong>
+                    <p>Ignore click-away and stay visible until {shortcutLabel(settings.shortcuts.close)} or the × button.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="settings-switch"
+                    role="switch"
+                    aria-label="Keep Captura open"
+                    aria-checked={settings.keepOpen}
+                    data-checked={settings.keepOpen}
+                    onClick={() => void onKeepOpenChange(!settings.keepOpen)}
+                  >
+                    <i />
+                  </button>
+                </div>
 
-          <div className="settings-group-title">
-            <span>Trash</span>
-          </div>
+                <div className="settings-row">
+                  <span className="settings-icon"><Clipboard size={16} /></span>
+                  <div>
+                    <strong>Capture clipboard</strong>
+                    <p>Also available anywhere via {shortcutLabel(settings.shortcuts.captureClipboard)}. Copy an image or text, press it, captured.</p>
+                  </div>
+                  <Button variant="surface" size="sm" onClick={() => void onCaptureClipboard()}>Capture</Button>
+                </div>
 
-          <div className="settings-row">
-            <span className="settings-icon">
-              <Trash2 size={16} />
-            </span>
-            <div>
-              <strong>Auto-delete</strong>
-              <p>{trashRetentionLabel[settings.trashRetention]}</p>
-            </div>
-            <div className="settings-segmented" role="radiogroup" aria-label="Trash auto-delete">
-              {retentionOptions.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.trashRetention === value}
-                  data-active={settings.trashRetention === value}
-                  onClick={() => void onTrashRetentionChange(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
+                <div className="settings-row">
+                  <span className="settings-icon"><ShieldCheck size={16} /></span>
+                  <div>
+                    <strong>Accessibility</strong>
+                    <p>Needed only to send Copy and Paste to the app you are using.</p>
+                  </div>
+                  {permissionsReady ? (
+                    <span className="permission-ready"><Check size={12} />Ready</span>
+                  ) : (
+                    <Button variant="surface" size="sm" disabled={!permissions} onClick={onRequestAccessibility}>
+                      {permissions?.accessibilityTrusted || permissions?.postEventTrusted ? "Finish" : permissions ? "Allow" : "Checking"}
+                    </Button>
+                  )}
+                </div>
+              </>
+            ) : null}
 
-          <div className="settings-row">
-            <span className="settings-icon">
-              <Trash2 size={16} />
-            </span>
-            <div>
-              <strong>Empty Trash</strong>
-              <p>{trashCount ? `${trashCount} capture${trashCount === 1 ? "" : "s"} waiting to be deleted.` : "Nothing in Trash."}</p>
-            </div>
-            <Button variant="surface" size="sm" disabled={!trashCount} onClick={() => void onEmptyTrash()}>
-              Empty
-            </Button>
-          </div>
+            {section === "shortcuts" ? (
+              <>
+                <div className="settings-group-title">
+                  <span>Every shortcut can be rebound</span>
+                  <button type="button" onClick={() => void onResetShortcuts()}>
+                    <RotateCcw size={11} />
+                    Restore defaults
+                  </button>
+                </div>
+                <div className="shortcut-settings">
+                  {shortcutActions.map(({ action, label, description }) => (
+                    <div className="shortcut-setting" key={action}>
+                      <div>
+                        <strong>{label}</strong>
+                        <p>{description}</p>
+                      </div>
+                      <ShortcutRecorder
+                        action={action}
+                        value={settings.shortcuts[action]}
+                        onChange={(shortcut) => onShortcutChange(action, shortcut)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : null}
 
-          <div className="settings-group-title">
-            <span>Editor</span>
-          </div>
+            {section === "editor" ? (
+              <>
+                <div className="settings-row">
+                  <span className="settings-icon"><FileCode2 size={16} /></span>
+                  <div>
+                    <strong>Open captures as</strong>
+                    <p>Page edits like a document, with / for blocks. Source shows the Markdown.</p>
+                  </div>
+                  <Segmented label="Default capture view" value={settings.defaultCaptureView} options={viewOptions} onChange={(view) => void onDefaultCaptureViewChange(view)} />
+                </div>
+                <p className="settings-hint">Captures with tables or raw HTML open in Source so their formatting is kept. Edits save automatically.</p>
+              </>
+            ) : null}
 
-          <div className="settings-row">
-            <span className="settings-icon">
-              <FileCode2 size={16} />
-            </span>
-            <div>
-              <strong>Open captures as</strong>
-              <p>Page edits like a document; Source shows the Markdown.</p>
-            </div>
-            <div className="settings-segmented" role="radiogroup" aria-label="Default capture view">
-              {viewOptions.map(({ value, label }) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={settings.defaultCaptureView === value}
-                  data-active={settings.defaultCaptureView === value}
-                  onClick={() => void onDefaultCaptureViewChange(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
+            {section === "trash" ? (
+              <>
+                <div className="settings-row">
+                  <span className="settings-icon"><Trash2 size={16} /></span>
+                  <div>
+                    <strong>Auto-delete</strong>
+                    <p>{trashRetentionLabel[settings.trashRetention]}</p>
+                  </div>
+                  <Segmented label="Trash auto-delete" value={settings.trashRetention} options={retentionOptions} onChange={(retention) => void onTrashRetentionChange(retention)} />
+                </div>
+                <div className="settings-row">
+                  <span className="settings-icon"><Trash2 size={16} /></span>
+                  <div>
+                    <strong>Empty Trash</strong>
+                    <p>{trashCount ? `${trashCount} capture${trashCount === 1 ? "" : "s"} waiting to be deleted.` : "Nothing in Trash."}</p>
+                  </div>
+                  {confirmingEmpty ? (
+                    <span className="settings-inline-actions">
+                      <Button variant="ghost" size="sm" onClick={() => setConfirmingEmpty(false)}>Cancel</Button>
+                      <Button variant="danger" size="sm" onClick={() => { setConfirmingEmpty(false); void onEmptyTrash(); }}>Delete all</Button>
+                    </span>
+                  ) : (
+                    <Button variant="surface" size="sm" disabled={!trashCount} onClick={() => setConfirmingEmpty(true)}>Empty</Button>
+                  )}
+                </div>
+                <p className="settings-hint">Merged captures also move to Trash, so a merge can be undone. "Now" skips Trash entirely.</p>
+              </>
+            ) : null}
 
-          <div className="settings-group-title">
-            <span>Permissions and updates</span>
-          </div>
-
-          <div className="settings-row">
-            <span className="settings-icon">
-              <ShieldCheck size={16} />
-            </span>
-            <div>
-              <strong>Accessibility</strong>
-              <p>
-                Needed only to send Copy and Paste to the app you are using.
-              </p>
-            </div>
-            {permissionsReady ? (
-              <span className="permission-ready">
-                <Check size={12} />
-                Ready
-              </span>
-            ) : (
-              <Button
-                variant="surface"
-                size="sm"
-                disabled={!permissions}
-                onClick={onRequestAccessibility}
-              >
-                {permissions?.accessibilityTrusted ||
-                permissions?.postEventTrusted
-                  ? "Finish"
-                  : permissions
-                    ? "Allow"
-                    : "Checking"}
-              </Button>
-            )}
-          </div>
-
-          <div className="settings-row">
-            <span className="settings-icon">
-              <DownloadCloud size={16} />
-            </span>
-            <div>
-              <strong>Software update</strong>
-              <p>{updateStatusLine(updateStatus)}</p>
-            </div>
-            {updateStatus.phase === "available" ? (
-              <Button
-                variant="surface"
-                size="sm"
-                onClick={() => void onInstallUpdate()}
-              >
-                Install
-              </Button>
-            ) : (
-              <Button
-                variant="surface"
-                size="sm"
-                disabled={
-                  updateStatus.phase === "checking" ||
-                  updateStatus.phase === "installing"
-                }
-                onClick={() => void onCheckUpdates()}
-              >
-                Check
-              </Button>
-            )}
-          </div>
-
-          <div className="privacy-note">
-            <LockKeyhole size={15} />
-            <p>
-              Captura stores captures and preferences in a local SQLite
-              database. No account, analytics, server, or sync.
-            </p>
+            {section === "about" ? (
+              <>
+                <div className="settings-row">
+                  <span className="settings-icon"><DownloadCloud size={16} /></span>
+                  <div>
+                    <strong>Software update</strong>
+                    <p>{updateStatusLine(updateStatus)}</p>
+                  </div>
+                  {updateStatus.phase === "available" ? (
+                    <Button variant="surface" size="sm" onClick={() => void onInstallUpdate()}>Install</Button>
+                  ) : (
+                    <Button variant="surface" size="sm" disabled={updateStatus.phase === "checking" || updateStatus.phase === "installing"} onClick={() => void onCheckUpdates()}>Check</Button>
+                  )}
+                </div>
+                <div className="privacy-note">
+                  <LockKeyhole size={15} />
+                  <p>Captura stores captures and preferences in a local SQLite database, with a second copy in Captura Backups. No account, analytics, server, or sync.</p>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
 

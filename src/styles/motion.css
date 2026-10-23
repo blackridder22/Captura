@@ -1,0 +1,117 @@
+/* Presence-driven motion. Elements carry data-state="enter|open|exit" from
+   usePresence; transitions (not keyframes) so rapid re-triggers retarget. */
+
+/* Sheets (settings, capture page): modal, centered, not anchored. */
+.sheet-backdrop[data-state] {
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.sheet-backdrop[data-state="enter"],
+.sheet-backdrop[data-state="exit"] { opacity: 0; }
+.sheet-backdrop[data-state="exit"] { transition-duration: 160ms; }
+.sheet-backdrop[data-state] > .settings-sheet,
+.sheet-backdrop[data-state] > .capture-sheet {
+  transition:
+    transform var(--dur-slow) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+.sheet-backdrop[data-state="enter"] > .settings-sheet,
+.sheet-backdrop[data-state="enter"] > .capture-sheet { opacity: 0; transform: translateY(10px) scale(0.975); }
+.sheet-backdrop[data-state="exit"] > .settings-sheet,
+.sheet-backdrop[data-state="exit"] > .capture-sheet { opacity: 0; transform: translateY(6px) scale(0.985); transition-duration: 160ms; }
+
+/* Menus anchored at the pointer / trigger: grow from the top-left corner. */
+.queue-context-menu[data-state],
+.section-context-menu[data-state],
+.image-import-menu[data-state] {
+  transform-origin: top left;
+  transition:
+    transform 160ms var(--ease-out),
+    opacity 140ms var(--ease-out);
+}
+.queue-context-menu[data-state="enter"],
+.section-context-menu[data-state="enter"],
+.image-import-menu[data-state="enter"] { opacity: 0; transform: scale(0.96) translateY(-3px); }
+.queue-context-menu[data-state="exit"],
+.section-context-menu[data-state="exit"],
+.image-import-menu[data-state="exit"] { opacity: 0; transform: scale(0.98); transition-duration: 110ms; pointer-events: none; }
+
+/* The slash palette mounts per keystroke session; a short entrance suffices. */
+.slash-menu { transform-origin: top left; animation: palette-in 150ms var(--ease-out) both; }
+@keyframes palette-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Toast: enters from below, leaves the same way. */
+.app-toast[data-state] {
+  transition:
+    transform 200ms var(--ease-out),
+    opacity 180ms var(--ease-out);
+}
+.app-toast[data-state="enter"] { opacity: 0; transform: translateX(-50%) translateY(10px); }
+.app-toast[data-state="exit"] { opacity: 0; transform: translateX(-50%) translateY(8px); transition-duration: 150ms; }
+
+/* Rows that arrive after the list settled (a new capture, a restore). */
+.queue-item[data-enter="true"] { animation: row-in var(--dur-base) var(--ease-out) both; }
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Selection rail and row lift: arrow-key navigation is frequent, keep it brief. */
+.queue-item::before {
+  transform: scaleY(0.6);
+  opacity: 0;
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.queue-item[data-selected="true"]::before { transform: scaleY(1); opacity: 1; }
+
+/* Filter underline slides between tabs; the indicator is positioned by FilterTabs. */
+.filter-indicator {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  width: 1px;
+  border-radius: 999px 999px 0 0;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform var(--dur-base) var(--ease-in-out), opacity var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+.filter-indicator[data-ready="false"] { transition: none; }
+
+/* Settings sections crossfade on switch. */
+.settings-section { animation: section-in 160ms var(--ease-out) both; }
+@keyframes section-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Capture HUD and panel keep their short entrances. */
+@media (prefers-reduced-motion: no-preference) {
+  .captura-panel { animation: panel-in 120ms var(--ease-out) both; }
+  .capture-hud { animation: hud-in 180ms var(--ease-out) both; }
+  .loading-list i { animation: loading-sheen 1.2s ease-in-out infinite; }
+}
+@keyframes panel-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hud-in {
+  from { opacity: 0; transform: translateY(-7px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes loading-sheen { from { background-position: 170% 0; } to { background-position: -80% 0; } }
+
+/* Reduced motion: keep fades, drop movement. */
+@media (prefers-reduced-motion: reduce) {
+  .sheet-backdrop[data-state] > .settings-sheet,
+  .sheet-backdrop[data-state] > .capture-sheet,
+  .queue-context-menu[data-state],
+  .section-context-menu[data-state],
+  .image-import-menu[data-state],
+  .app-toast[data-state] { transition-property: opacity; transform: none !important; }
+  .app-toast[data-state] { transform: translateX(-50%) !important; }
+  .slash-menu, .queue-item[data-enter="true"], .settings-section, .captura-panel, .capture-hud { animation: fade-in 120ms ease-out both; }
+  .filter-indicator, .queue-item::before { transition: none; }
+  .loading-list i { animation: none; }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }

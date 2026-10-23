@@ -2,6 +2,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { ChevronLeft, ChevronRight, Code2, Copy, FileText, Link2, PanelTop, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useCaptureDetail } from "../../hooks/use-capture-detail";
+import type { PresenceState } from "../../hooks/use-presence";
 import { attachmentUrl, copyItems } from "../../lib/api";
 import { captureTitle } from "../../lib/items";
 import { matchesShortcut } from "../../lib/shortcuts";
@@ -17,6 +18,7 @@ type CapturePageProps = {
   defaultView?: CaptureView;
   onDefaultViewChange?: (view: CaptureView) => Promise<void>;
   onRestore?: (id: string) => Promise<void>;
+  presenceState?: PresenceState;
   onClose: () => void;
 };
 
@@ -41,7 +43,7 @@ function saveStatus(detail: ReturnType<typeof useCaptureDetail>) {
 /// One page per capture. The Tiptap document is the live view of the
 /// Markdown; Source is the same Markdown in CodeMirror. Markdown stays the
 /// record: the page never re-serializes until something is actually edited.
-export default function CapturePage({ request, shortcuts, defaultView = "page", onDefaultViewChange, onRestore, onClose }: CapturePageProps) {
+export default function CapturePage({ request, shortcuts, defaultView = "page", onDefaultViewChange, onRestore, presenceState, onClose }: CapturePageProps) {
   const detail = useCaptureDetail(request, onClose, defaultView);
   const sheetRef = useRef<HTMLElement>(null);
   const confirmationRef = useRef<HTMLDivElement>(null);
@@ -182,7 +184,7 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
   const status = saveStatus(detail);
 
   return (
-    <div className="sheet-backdrop capture-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !detail.pending) detail.close(); }} onKeyDown={onKeyDown}>
+    <div className="sheet-backdrop capture-backdrop" data-state={presenceState} onMouseDown={(event) => { if (event.target === event.currentTarget && !detail.pending) detail.close(); }} onKeyDown={onKeyDown}>
       <section ref={sheetRef} className="capture-sheet capture-page" role="dialog" aria-modal="true" aria-labelledby="capture-sheet-title" data-view={showSource ? "source" : "page"} data-readonly={readOnly} inert={Boolean(detail.pending)}>
         <header>
           <div>

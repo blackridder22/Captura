@@ -1,5 +1,6 @@
 import { ArrowLeft, Trash2 } from "lucide-react";
 import { useMenuFocus, useMenuPosition } from "../hooks/use-menu-position";
+import type { PresenceState } from "../hooks/use-presence";
 
 type SectionContextMenuProps = {
   x: number;
@@ -7,6 +8,7 @@ type SectionContextMenuProps = {
   name: string;
   count: number;
   confirmingDelete: boolean;
+  presenceState?: PresenceState;
   onAskDelete: () => void;
   onCancel: () => void;
   onDelete: () => void;
@@ -18,6 +20,7 @@ export function SectionContextMenu({
   name,
   count,
   confirmingDelete,
+  presenceState,
   onAskDelete,
   onCancel,
   onDelete,
@@ -30,6 +33,7 @@ export function SectionContextMenu({
       className="section-context-menu"
       ref={ref}
       style={position}
+      data-state={presenceState}
       data-confirming={confirmingDelete}
       role={confirmingDelete ? "alertdialog" : "menu"}
       aria-modal={confirmingDelete || undefined}

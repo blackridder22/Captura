@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Trash2,
 } from "lucide-react";
+import type { PresenceState } from "../hooks/use-presence";
 import type {
   CaptureItem,
   KeyboardShortcutSettings,
@@ -26,6 +27,7 @@ type QueueContextMenuProps = {
   sections: Section[];
   shortcuts: KeyboardShortcutSettings;
   inTrash: boolean;
+  presenceState?: PresenceState;
   onCopy: () => void;
   onCopyAsList: () => void;
   onPaste: () => void;
@@ -47,6 +49,7 @@ export function QueueContextMenu({
   sections,
   shortcuts,
   inTrash,
+  presenceState,
   onCopy,
   onCopyAsList,
   onPaste,
@@ -75,6 +78,7 @@ export function QueueContextMenu({
         className="queue-context-menu"
         ref={ref}
         style={position}
+        data-state={presenceState}
         role="menu"
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -115,6 +119,7 @@ export function QueueContextMenu({
       className="queue-context-menu"
       ref={ref}
       style={position}
+      data-state={presenceState}
       role="menu"
       onMouseDown={(event) => event.stopPropagation()}
     >

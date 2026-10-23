@@ -27,6 +27,8 @@ type QueueItemProps = {
   selectionMode: boolean;
   sectionName?: string;
   thumbnailFailed?: boolean;
+  /// True for captures created after the list settled: they slide in.
+  enter?: boolean;
   pasteShortcut: string;
   onSelect: (id: string, event: MouseEvent<HTMLElement>) => void;
   onContextMenu: (id: string, event: MouseEvent<HTMLElement>) => void;
@@ -67,6 +69,7 @@ export const QueueItem = memo(function QueueItem({
   selectionMode,
   sectionName,
   thumbnailFailed = false,
+  enter = false,
   pasteShortcut,
   onSelect,
   onContextMenu,
@@ -92,6 +95,7 @@ export const QueueItem = memo(function QueueItem({
       data-multi-selected={multiSelected}
       data-done={done}
       data-trashed={trashed}
+      data-enter={enter}
       data-selection-mode={selectionMode}
       onClick={(event) => onSelect(id, event)}
       onMouseDown={(event) => {

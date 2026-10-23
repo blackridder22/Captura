@@ -14,6 +14,7 @@ import { useKeyboardShortcuts } from "./hooks/use-keyboard-shortcuts";
 import { useNotify } from "./hooks/use-notify";
 import { useOverlays } from "./hooks/use-overlays";
 import { usePermissions } from "./hooks/use-permissions";
+import { useLastValue, usePresence } from "./hooks/use-presence";
 import { useQueueData } from "./hooks/use-queue-data";
 import { useQueueFilters } from "./hooks/use-queue-filters";
 import { useSelection } from "./hooks/use-selection";
@@ -131,6 +132,13 @@ export default function App() {
     });
     return () => { cancelAnimationFrame(firstFrame); cancelAnimationFrame(secondFrame); };
   }, [loading, removeItems]);
+  // Rows created after the first paint slide in; everything already there does not.
+  const settledAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (loading) return;
+    const frame = requestAnimationFrame(() => { settledAt.current = Date.now(); });
+    return () => cancelAnimationFrame(frame);
+  }, [loading]);
   const shiftSelectionMode = useShiftSelectionMode();
   const searchRef = useRef<HTMLInputElement>(null);
   const [captureRequest, setCaptureRequest] = useState<CaptureDetailRequest | null>(null);
@@ -282,9 +290,26 @@ export default function App() {
   const onRowRestore = useStableCallback((id: string) => void handleRestore(id));
   const onRowPurge = useStableCallback((id: string) => void handlePurge(id));
 
+  // Exit transitions: each overlay stays mounted for its exit, rendering the
+  // last content it had.
+  const settingsPresence = usePresence(settingsOpen, 170);
+  const capturePresence = usePresence(captureRequest !== null, 170);
+  const shownCaptureRequest = useLastValue(captureRequest);
+  const toastPresence = usePresence(toast !== null, 160);
+  const shownToast = useLastValue(toast);
+  const queueMenu = contextMenu?.kind === "queue" ? contextMenu : null;
+  const queueMenuPresence = usePresence(queueMenu !== null, 120);
+  const shownQueueMenu = useLastValue(queueMenu);
+  const imageMenu = contextMenu?.kind === "image" ? contextMenu : null;
+  const imageMenuPresence = usePresence(imageMenu !== null, 120);
+  const shownImageMenu = useLastValue(imageMenu);
+  const sectionMenuState = contextMenu?.kind === "section" ? contextMenu : null;
+  const sectionMenuPresence = usePresence(sectionMenuState !== null, 120);
+  const shownSectionMenu = useLastValue(sectionMenuState);
+
   const sectionMenu =
-    contextMenu?.kind === "section"
-      ? sections.find((section) => section.id === contextMenu.sectionId) ?? null
+    shownSectionMenu && sectionMenuPresence.mounted
+      ? sections.find((section) => section.id === shownSectionMenu.sectionId) ?? null
       : null;
   const sectionMenuCaptureCount = sectionMenu
     ? items.filter((item) => item.sectionId === sectionMenu.id && item.deletedAt === null).length
@@ -424,6 +449,7 @@ export default function App() {
                   item.sectionId ? sectionNames.get(item.sectionId) : undefined
                 }
                 thumbnailFailed={failedThumbnails.has(item.id)}
+                enter={settledAt.current !== null && Date.parse(item.createdAt) > settledAt.current}
                 pasteShortcut={appSettings.shortcuts.paste}
                 onSelect={onRowSelect}
                 onContextMenu={onRowContextMenu}
@@ -507,21 +533,22 @@ export default function App() {
           )}
         </footer>
         </div>
-        {captureRequest ? <Suspense fallback={<div className="sheet-backdrop capture-backdrop" role="status">Loading capture…</div>}>
-          <CaptureSheet request={captureRequest} shortcuts={appSettings.shortcuts} defaultView={appSettings.defaultCaptureView} onDefaultViewChange={changeDefaultCaptureView} onRestore={handleRestore} onClose={closeDetail} />
+        {capturePresence.mounted && shownCaptureRequest ? <Suspense fallback={<div className="sheet-backdrop capture-backdrop" role="status">Loading capture…</div>}>
+          <CaptureSheet request={shownCaptureRequest} shortcuts={appSettings.shortcuts} defaultView={appSettings.defaultCaptureView} onDefaultViewChange={changeDefaultCaptureView} onRestore={handleRestore} presenceState={capturePresence.state} onClose={closeDetail} />
         </Suspense> : null}
       </section>
 
-      {contextMenu?.kind === "image" ? <ImageImportMenu x={contextMenu.x} y={contextMenu.y} onClose={() => setContextMenu(null)} onChoose={() => { setContextMenu(null); void imageImport.chooseImages(); }} onPaste={() => { setContextMenu(null); void imageImport.pasteImage(); }} /> : null}
+      {imageMenuPresence.mounted && shownImageMenu ? <ImageImportMenu x={shownImageMenu.x} y={shownImageMenu.y} presenceState={imageMenuPresence.state} onClose={() => setContextMenu(null)} onChoose={() => { setContextMenu(null); void imageImport.chooseImages(); }} onPaste={() => { setContextMenu(null); void imageImport.pasteImage(); }} /> : null}
 
-      {contextMenu?.kind === "queue" ? (
+      {queueMenuPresence.mounted && shownQueueMenu ? (
         <QueueContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
+          x={shownQueueMenu.x}
+          y={shownQueueMenu.y}
           items={actionItems}
           sections={sections}
           shortcuts={appSettings.shortcuts}
           inTrash={inTrash}
+          presenceState={queueMenuPresence.state}
           onCopy={() => void copySelected(false)}
           onCopyAsList={() => void copySelected(true)}
           onPaste={() => {
@@ -546,13 +573,14 @@ export default function App() {
         />
       ) : null}
 
-      {contextMenu?.kind === "section" && sectionMenu ? (
+      {sectionMenu && shownSectionMenu ? (
         <SectionContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
+          x={shownSectionMenu.x}
+          y={shownSectionMenu.y}
           name={sectionMenu.name}
           count={sectionMenuCaptureCount}
-          confirmingDelete={contextMenu.confirmingDelete}
+          confirmingDelete={shownSectionMenu.confirmingDelete}
+          presenceState={sectionMenuPresence.state}
           onAskDelete={() =>
             setContextMenu((current) =>
               current?.kind === "section"
@@ -565,11 +593,12 @@ export default function App() {
         />
       ) : null}
 
-      {settingsOpen ? (
+      {settingsPresence.mounted ? (
         <SettingsSheet
           permissions={permissions}
           settings={appSettings}
           trashCount={counts.trash}
+          presenceState={settingsPresence.state}
           onClose={() => setSettingsOpen(false)}
           onRequestAccessibility={requestAccessibilityAndRefresh}
           onShortcutChange={changeShortcut}
@@ -586,16 +615,16 @@ export default function App() {
         />
       ) : null}
 
-      {toast ? (
-        <div className="app-toast" data-tone={toast.tone} data-actionable={Boolean(toast.action)} role="status">
-          <span>{toast.text}</span>
-          {toast.action ? (
+      {toastPresence.mounted && shownToast ? (
+        <div className="app-toast" data-tone={shownToast.tone} data-actionable={Boolean(shownToast.action)} data-state={toastPresence.state} role="status">
+          <span>{shownToast.text}</span>
+          {shownToast.action ? (
             <button
               type="button"
               className="toast-action"
-              onClick={() => { const { action } = toast; dismissToast(); void action?.run(); }}
+              onClick={() => { const { action } = shownToast; dismissToast(); void action?.run(); }}
             >
-              {toast.action.label}
+              {shownToast.action.label}
             </button>
           ) : null}
         </div>

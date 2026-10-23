@@ -1,0 +1,62 @@
+/* Captura design tokens. Colors stay charcoal-and-copper; type, radii,
+   control sizes and motion are the 0.0.8 additions. */
+:root {
+  color-scheme: dark;
+  --bg: #08090a;
+  --bg-soft: #101214;
+  --surface: rgba(23, 25, 27, 0.82);
+  --surface-strong: rgba(27, 29, 31, 0.96);
+  --surface-hover: rgba(39, 41, 44, 0.88);
+  --line: rgba(255, 255, 255, 0.105);
+  --line-strong: rgba(255, 255, 255, 0.17);
+  --text: #f4f2f0;
+  --muted: #aaa7a3;
+  --subtle: #777673;
+  --accent: #f08b64;
+  --accent-strong: #ffb08f;
+  --accent-ink: #261006;
+  --success: #58d17b;
+  --danger: #f17b72;
+  --code: #e2b6a3;
+
+  /* Typography. --font-sans / --font-mono are swapped once the family is chosen. */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  --font: var(--font-sans);
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 17px;
+  --tracking-tight: -0.012em;
+
+  /* Shape and size. */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-sheet: 16px;
+  --radius-panel: 20px;
+  --control-sm: 28px;
+  --control-md: 32px;
+  --control-lg: 34px;
+
+  /* Motion: strong ease-out for anything entering or leaving, strong
+     ease-in-out for things that move while on screen. */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --glass-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.095),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+    0 26px 80px rgba(0, 0, 0, 0.56);
+  --control-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.34),
+    0 8px 22px rgba(0, 0, 0, 0.2);
+}
