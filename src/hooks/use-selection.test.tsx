@@ -13,7 +13,7 @@ const items: CaptureItem[] = ["first", "middle", "third"].map((id) => ({
   status: "open",
   sourceApp: null,
   sourceBundleId: null,
-  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
   sectionId: null,
   createdAt: "2026-08-04T17:20:00Z",
   updatedAt: "2026-08-04T17:20:00Z",

@@ -38,6 +38,7 @@
       {
         "label": "capture-hud",
         "dragDropEnabled": false,
+        "focusable": false,
         "title": "Captured",
         "url": "index.html?hud=1",
         "width": 360,

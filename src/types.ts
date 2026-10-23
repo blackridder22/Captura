@@ -1,6 +1,8 @@
 export type ItemKind = "prompt" | "note" | "link" | "image";
 export type ItemStatus = "open" | "done";
-export type QueueFilter = "inbox" | "prompts" | "notes" | "done";
+export type QueueFilter = "inbox" | "prompts" | "notes" | "done" | "trash";
+export type TrashRetention = "immediate" | "7d" | "28d";
+export type CaptureView = "page" | "source";
 export type SectionFilter = "all" | "unfiled" | string;
 export type CopyMode = "native" | "sourceMarkdown" | "markdownList";
 
@@ -25,13 +27,16 @@ export type ShortcutAction =
   | "markDone"
   | "edit"
   | "merge"
-  | "delete";
+  | "delete"
+  | "selectAll";
 
 export type KeyboardShortcutSettings = Record<ShortcutAction, string>;
 
 export type AppSettings = {
   shortcuts: KeyboardShortcutSettings;
   keepOpen: boolean;
+  trashRetention: TrashRetention;
+  defaultCaptureView: CaptureView;
 };
 
 export type CaptureItem = {
@@ -48,6 +53,14 @@ export type CaptureItem = {
   imageHeight: number | null;
   createdAt: string;
   updatedAt: string;
+  /** Set while the capture is in Trash; null for live captures. */
+  deletedAt: string | null;
+};
+
+/** Delete outcome: trashed rows come back as upserts, purged ids are gone. */
+export type DeleteResult = {
+  trashed: CaptureItem[];
+  purgedIds: string[];
 };
 
 export type Section = {

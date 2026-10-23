@@ -3,9 +3,11 @@ import {
   createItem,
   createSection,
   deleteSection,
-  deleteItem,
+  deleteItems,
   moveItemsToSection,
   pasteItem,
+  purgeItems,
+  restoreItems,
   toggleItem,
 } from "../lib/api";
 import type {
@@ -15,7 +17,7 @@ import type {
   Section,
   SectionFilter,
 } from "../types";
-import type { ToastTone } from "./use-notify";
+import type { ToastAction, ToastTone } from "./use-notify";
 
 /// Single-item and composer actions. UI state belongs to the owning hooks.
 type ItemActionDeps = {
@@ -32,7 +34,7 @@ type ItemActionDeps = {
   setContextMenu: (menu: ContextMenu | null) => void;
   setSingle: (id: string) => void;
   announce: (text: string) => void;
-  notify: (text: string, tone?: ToastTone) => void;
+  notify: (text: string, tone?: ToastTone, action?: ToastAction) => void;
   composer: string;
   composerKind: CaptureItem["kind"];
   saving: boolean;
@@ -121,13 +123,53 @@ export function useItemActions({
     [replaceItem],
   );
 
+  /// Row delete: Trash with Undo, or permanent when retention is Immediate.
   const handleDelete = useCallback(
     async (id: string) => {
-      await deleteItem(id);
-      removeItems([id]);
-      announce("Capture deleted");
+      try {
+        const result = await deleteItems([id]);
+        if (result.purgedIds.length) {
+          removeItems(result.purgedIds);
+          announce("Capture deleted");
+          return;
+        }
+        applyUpdatedItems(result.trashed);
+        notify("Moved to Trash", "info", {
+          label: "Undo",
+          run: async () => {
+            applyUpdatedItems(await restoreItems([id]));
+            announce("Capture restored");
+          },
+        });
+      } catch (error) {
+        notify(typeof error === "string" ? error : "Could not delete this capture.", "error");
+      }
     },
-    [announce, removeItems],
+    [announce, applyUpdatedItems, notify, removeItems],
+  );
+
+  const handleRestore = useCallback(
+    async (id: string) => {
+      try {
+        applyUpdatedItems(await restoreItems([id]));
+        notify("Capture restored");
+      } catch (error) {
+        notify(typeof error === "string" ? error : "Could not restore this capture.", "error");
+      }
+    },
+    [applyUpdatedItems, notify],
+  );
+
+  const handlePurge = useCallback(
+    async (id: string) => {
+      try {
+        removeItems(await purgeItems([id]));
+        announce("Capture deleted permanently");
+      } catch (error) {
+        notify(typeof error === "string" ? error : "Could not delete this capture.", "error");
+      }
+    },
+    [announce, notify, removeItems],
   );
 
   const handlePaste = useCallback(
@@ -201,6 +243,8 @@ export function useItemActions({
     handleCreate,
     handleToggle,
     handleDelete,
+    handleRestore,
+    handlePurge,
     handlePaste,
     handleCaptured,
     handleCreateSection,

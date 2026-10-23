@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { onCapturesChanged, snapshotQueue } from "../lib/api";
-import { canAcceptSnapshot, compareCaptureTimestamps, reconcileCaptures } from "../lib/queue-reconciliation";
+import { canAcceptSnapshot, reconcileCaptures } from "../lib/queue-reconciliation";
 import { defaultShortcuts } from "../lib/shortcuts";
 import type { AppSettings, CaptureItem, Section } from "../types";
 
-const initialSettings: AppSettings = { shortcuts: { ...defaultShortcuts }, keepOpen: false };
+const initialSettings: AppSettings = { shortcuts: { ...defaultShortcuts }, keepOpen: false, trashRetention: "7d", defaultCaptureView: "page" };
 
 export function useQueueData() {
   const [items, setItems] = useState<CaptureItem[]>([]);
@@ -71,18 +71,16 @@ export function useQueueData() {
   const prependReplacing = useCallback((item: CaptureItem, replacedIds: string[]) => {
     commit((current) => reconcileCaptures(current, { upserts: [item], deletedIds: replacedIds }));
   }, [commit]);
+  // Reply and event both carry the same row; reconcile keeps the array identity
+  // when nothing changed, so the second arrival renders nothing.
   const replaceItem = useCallback((nextItem: CaptureItem) => {
-    commit((current) => current.map((item) => item.id === nextItem.id && compareCaptureTimestamps(nextItem.updatedAt, item.updatedAt) >= 0 ? nextItem : item));
+    commit((current) => reconcileCaptures(current, { upserts: [nextItem], deletedIds: [] }));
   }, [commit]);
   const removeItems = useCallback((ids: string[]) => {
     commit((current) => reconcileCaptures(current, { upserts: [], deletedIds: ids }));
   }, [commit]);
   const applyUpdatedItems = useCallback((updated: CaptureItem[]) => {
-    const updates = new Map(updated.map((item) => [item.id, item]));
-    commit((current) => current.map((item) => {
-      const next = updates.get(item.id);
-      return next && compareCaptureTimestamps(next.updatedAt, item.updatedAt) >= 0 ? next : item;
-    }));
+    commit((current) => reconcileCaptures(current, { upserts: updated, deletedIds: [] }));
   }, [commit]);
   const addSection = useCallback((section: Section) => {
     setSections((current) => [...current.filter((candidate) => candidate.id !== section.id), section]);

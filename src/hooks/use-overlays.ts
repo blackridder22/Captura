@@ -2,7 +2,9 @@ import { useCallback, useState } from "react";
 import { hideMainWindow } from "../lib/api";
 import type { ContextMenu } from "../types";
 
-export function useOverlays() {
+/// Escape peels one layer at a time: menu, then settings, then a
+/// multi-selection, and only then the panel itself.
+export function useOverlays({ hasMultiSelection, clearSelection }: { hasMultiSelection: boolean; clearSelection: () => void }) {
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -13,10 +15,12 @@ export function useOverlays() {
       setContextMenu(null);
     } else if (settingsOpen) {
       setSettingsOpen(false);
+    } else if (hasMultiSelection) {
+      clearSelection();
     } else {
       void hideMainWindow();
     }
-  }, [contextMenu, settingsOpen]);
+  }, [clearSelection, contextMenu, hasMultiSelection, settingsOpen]);
 
   return {
     contextMenu,

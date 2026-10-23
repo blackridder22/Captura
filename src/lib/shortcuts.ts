@@ -21,6 +21,7 @@ export const defaultShortcuts: KeyboardShortcutSettings = {
   edit: "Enter",
   merge: "Shift+Command+M",
   delete: "Command+Backspace",
+  selectAll: "Command+A",
 };
 
 export const shortcutActions: {
@@ -106,7 +107,12 @@ export const shortcutActions: {
   {
     action: "delete",
     label: "Delete",
-    description: "Delete selected captures.",
+    description: "Move selected captures to Trash.",
+  },
+  {
+    action: "selectAll",
+    label: "Select all",
+    description: "Select every visible capture.",
   },
 ];
 

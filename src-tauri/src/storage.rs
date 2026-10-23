@@ -8,8 +8,11 @@ use std::{
     fs::File,
     io::Write,
     path::{Path, PathBuf},
-    sync::Mutex,
-    time::UNIX_EPOCH,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Condvar, Mutex,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{Connection, OpenFlags};
@@ -23,6 +26,12 @@ const ISSUE_FILE: &str = "recovery-required";
 const DIAGNOSTIC_FILE: &str = "diagnostics.jsonl";
 const PREVIOUS_DIAGNOSTIC_FILE: &str = "diagnostics.previous.jsonl";
 const ACTIVE_SESSION_FILE: &str = "active-session";
+/// Present while the primary holds writes the backup has not absorbed yet.
+const PENDING_FILE: &str = "pending-backup";
+/// Unix seconds of the last full `integrity_check`; cheaper `quick_check`
+/// runs in between.
+const FULL_CHECK_STAMP_FILE: &str = "last-full-check";
+const FULL_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_DIAGNOSTIC_BYTES: u64 = 2 * 1024 * 1024;
 
 struct DiagnosticLog {
@@ -65,7 +74,18 @@ impl DiagnosticLog {
         Ok(log)
     }
 
+    /// Lifecycle records are fsynced so a crash cannot lose them.
     fn record(&self, event: &str, details: Value) -> Result<(), String> {
+        self.write_record(event, details, true)
+    }
+
+    /// High-frequency records (one per write) skip the fsync; the OS flushes
+    /// them within seconds and an app crash does not lose buffered data.
+    fn record_unsynced(&self, event: &str, details: Value) -> Result<(), String> {
+        self.write_record(event, details, false)
+    }
+
+    fn write_record(&self, event: &str, details: Value, sync: bool) -> Result<(), String> {
         let _lock = self.write_lock.lock().map_err(|error| error.to_string())?;
         let path = self.directory.join(DIAGNOSTIC_FILE);
         if fs::metadata(&path).is_ok_and(|metadata| metadata.len() >= MAX_DIAGNOSTIC_BYTES) {
@@ -89,7 +109,10 @@ impl DiagnosticLog {
         });
         serde_json::to_writer(&mut file, &entry).map_err(|error| error.to_string())?;
         file.write_all(b"\n").map_err(|error| error.to_string())?;
-        file.sync_data().map_err(|error| error.to_string())
+        if sync {
+            file.sync_data().map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     fn finish(&self) {
@@ -129,6 +152,7 @@ pub struct ProtectedStorage {
     blocked: bool,
     snapshot_lock: Mutex<()>,
     diagnostics: DiagnosticLog,
+    dirty_marked: AtomicBool,
 }
 
 impl ProtectedStorage {
@@ -147,7 +171,7 @@ impl ProtectedStorage {
 
         if !primary.exists() {
             if backup.exists() {
-                if validate_database(&backup).is_ok() {
+                if validate_database(&backup, true).is_ok() {
                     diagnostics.record("restore_started", json!({}))?;
                     let restoration = (|| {
                         fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
@@ -206,17 +230,48 @@ impl ProtectedStorage {
             }),
         )?;
 
+        let dirty_marked = AtomicBool::new(backup_dir.join(PENDING_FILE).exists());
         Ok(Self {
             primary,
             backup_dir,
             blocked,
             snapshot_lock: Mutex::new(()),
             diagnostics,
+            dirty_marked,
         })
     }
 
     pub fn blocked(&self) -> bool {
         self.blocked
+    }
+
+    /// Called before every write. Leaves a marker so an interrupted session
+    /// still triggers a backup on the next launch.
+    pub fn mark_dirty(&self) {
+        if self.blocked || self.dirty_marked.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if create_private_directory(&self.backup_dir).is_ok() {
+            let _ = fs::write(self.backup_dir.join(PENDING_FILE), b"pending\n");
+        }
+    }
+
+    fn clear_dirty(&self) {
+        let _ = remove_if_present(&self.backup_dir.join(PENDING_FILE));
+        self.dirty_marked.store(false, Ordering::Release);
+    }
+
+    /// True when the backup may be behind: pending writes were marked, or no
+    /// backup exists yet. A clean previous session skips the launch backup.
+    pub fn needs_startup_backup(&self) -> bool {
+        !self.blocked
+            && (self.backup_dir.join(PENDING_FILE).exists()
+                || !self.backup_dir.join(DATABASE_FILE).exists())
+    }
+
+    /// Removes the pending marker after a backup that covered every write.
+    pub fn backup_caught_up(&self) {
+        self.clear_dirty();
     }
 
     pub fn issue_message(&self) -> String {
@@ -229,21 +284,26 @@ impl ProtectedStorage {
             .snapshot_lock
             .lock()
             .map_err(|_| "Backup lock unavailable")?;
+        let started = Instant::now();
         let result = self.snapshot_inner(database);
-        if let Err(error) = self.diagnostics.record(
-            "backup_result",
-            json!({
-                "ok": result.is_ok(),
-                "error": result.as_ref().err(),
-                "primary_captures": capture_count(&self.primary).ok(),
-                "backup_captures": capture_count(&self.backup_dir.join(DATABASE_FILE)).ok(),
-                "primary": file_probe(&self.primary),
-                "backup": file_probe(&self.backup_dir.join(DATABASE_FILE)),
-            }),
-        ) {
+        let details = json!({
+            "ok": result.is_ok(),
+            "error": result.as_ref().err(),
+            "elapsed_ms": started.elapsed().as_millis(),
+            "primary_captures": database.count_items().ok(),
+            "backup_captures": result.as_ref().ok().copied(),
+            "primary": file_probe(&self.primary),
+            "backup": file_probe(&self.backup_dir.join(DATABASE_FILE)),
+        });
+        let logged = if result.is_ok() {
+            self.diagnostics.record_unsynced("backup_result", details)
+        } else {
+            self.diagnostics.record("backup_result", details)
+        };
+        if let Err(error) = logged {
             eprintln!("Captura diagnostic log failed: {error}");
         }
-        result
+        result.map(|_| ())
     }
 
     pub fn record_event(&self, event: &str) {
@@ -261,11 +321,11 @@ impl ProtectedStorage {
         }
     }
 
-    pub fn record_database_write(&self) {
-        if let Err(error) = self.diagnostics.record(
+    pub fn record_database_write(&self, primary_captures: Option<i64>) {
+        if let Err(error) = self.diagnostics.record_unsynced(
             "database_write_committed",
             json!({
-                "primary_captures": capture_count(&self.primary).ok(),
+                "primary_captures": primary_captures,
                 "primary": file_probe(&self.primary),
             }),
         ) {
@@ -277,7 +337,8 @@ impl ProtectedStorage {
         self.diagnostics.finish();
     }
 
-    fn snapshot_inner(&self, database: &Database) -> Result<(), String> {
+    /// Returns the capture count the validated backup holds.
+    fn snapshot_inner(&self, database: &Database) -> Result<i64, String> {
         if self.blocked {
             return Err(self.issue_message());
         }
@@ -304,7 +365,11 @@ impl ProtectedStorage {
         File::open(&temporary)
             .and_then(|file| file.sync_all())
             .map_err(|error| error.to_string())?;
-        validate_database(&temporary)?;
+        let full_check = self.full_check_due();
+        let backup_captures = validate_database(&temporary, full_check)?;
+        if full_check {
+            self.stamp_full_check();
+        }
         remove_sqlite_sidecars(&self.backup_dir.join(DATABASE_FILE))?;
         fs::rename(&temporary, self.backup_dir.join(DATABASE_FILE))
             .map_err(|error| error.to_string())?;
@@ -312,7 +377,165 @@ impl ProtectedStorage {
         fs::write(self.backup_dir.join(MARKER_FILE), b"Captura local backup\n")
             .map_err(|error| error.to_string())?;
         prune_unreferenced_attachments(&self.backup_dir.join(DATABASE_FILE), &backup_attachments)?;
-        Ok(())
+        Ok(backup_captures)
+    }
+
+    fn full_check_due(&self) -> bool {
+        let stamp = self.backup_dir.join(FULL_CHECK_STAMP_FILE);
+        fs::read_to_string(&stamp)
+            .ok()
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .and_then(|seconds| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH + Duration::from_secs(seconds))
+                    .ok()
+            })
+            .is_none_or(|age| age >= FULL_CHECK_INTERVAL)
+    }
+
+    fn stamp_full_check(&self) {
+        if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            let _ = fs::write(
+                self.backup_dir.join(FULL_CHECK_STAMP_FILE),
+                now.as_secs().to_string(),
+            );
+        }
+    }
+}
+
+/// Coalesces backup requests onto one worker thread so a write never waits
+/// for a database copy. Writes announce themselves twice: `begin_write` before
+/// the transaction, `commit_write` after it, which lets the worker tell "every
+/// write is in the backup" from "a write is still in flight".
+#[derive(Default)]
+struct BackupFlags {
+    started: u64,
+    committed: u64,
+    backed_up: u64,
+    running: bool,
+    urgent: bool,
+    shutdown: bool,
+}
+
+#[derive(Default)]
+pub struct BackupScheduler {
+    flags: Mutex<BackupFlags>,
+    changed: Condvar,
+}
+
+impl BackupScheduler {
+    pub fn begin_write(&self) {
+        if let Ok(mut flags) = self.flags.lock() {
+            flags.started += 1;
+        }
+    }
+
+    pub fn commit_write(&self) {
+        if let Ok(mut flags) = self.flags.lock() {
+            flags.committed += 1;
+            self.changed.notify_all();
+        }
+    }
+
+    /// A write that needs no in-flight bookkeeping (settings).
+    pub fn request(&self) {
+        if let Ok(mut flags) = self.flags.lock() {
+            flags.started += 1;
+            flags.committed += 1;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Skip the debounce when something is pending (panel hidden, app idle).
+    pub fn nudge(&self) {
+        if let Ok(mut flags) = self.flags.lock() {
+            if flags.committed > flags.backed_up {
+                flags.urgent = true;
+                self.changed.notify_all();
+            }
+        }
+    }
+
+    /// Waits until every write committed so far is backed up, or `timeout`.
+    pub fn flush(&self, timeout: Duration) -> bool {
+        let Ok(mut flags) = self.flags.lock() else {
+            return false;
+        };
+        let target = flags.committed;
+        let deadline = Instant::now() + timeout;
+        flags.urgent = true;
+        self.changed.notify_all();
+        while flags.backed_up < target {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() || flags.shutdown {
+                return false;
+            }
+            flags = match self.changed.wait_timeout(flags, remaining) {
+                Ok((flags, _)) => flags,
+                Err(_) => return false,
+            };
+        }
+        true
+    }
+
+    pub fn shutdown(&self) {
+        if let Ok(mut flags) = self.flags.lock() {
+            flags.shutdown = true;
+            self.changed.notify_all();
+        }
+    }
+
+    /// Blocks until a backup is due. Returns the committed-write generation the
+    /// job will cover, or `None` after `shutdown`.
+    pub fn next_job(&self, debounce: Duration, max_wait: Duration) -> Option<u64> {
+        let mut flags = self.flags.lock().ok()?;
+        loop {
+            if flags.shutdown {
+                return None;
+            }
+            if flags.committed > flags.backed_up {
+                break;
+            }
+            flags = self.changed.wait(flags).ok()?;
+        }
+        let first_seen = Instant::now();
+        let mut seen = flags.committed;
+        loop {
+            if flags.urgent || flags.shutdown || first_seen.elapsed() >= max_wait {
+                break;
+            }
+            flags = self.changed.wait_timeout(flags, debounce).ok()?.0;
+            if flags.committed == seen {
+                break; // quiet for a full debounce window
+            }
+            seen = flags.committed;
+        }
+        if flags.shutdown {
+            return None;
+        }
+        flags.running = true;
+        flags.urgent = false;
+        Some(flags.committed)
+    }
+
+    /// Records a finished job. Returns true when no write began or committed
+    /// since the job started, i.e. the backup is exactly caught up.
+    pub fn finish_job(&self, generation: u64) -> bool {
+        let Ok(mut flags) = self.flags.lock() else {
+            return false;
+        };
+        flags.running = false;
+        flags.backed_up = flags.backed_up.max(generation);
+        self.changed.notify_all();
+        flags.started == flags.committed && flags.committed == generation
+    }
+
+    #[cfg(test)]
+    fn pending(&self) -> bool {
+        self.flags
+            .lock()
+            .map(|flags| flags.committed > flags.backed_up)
+            .unwrap_or(false)
     }
 }
 
@@ -356,17 +579,25 @@ fn capture_count(path: &Path) -> Result<i64, String> {
         .map_err(|error| error.to_string())
 }
 
-fn validate_database(path: &Path) -> Result<(), String> {
+/// `quick_check` skips index/content cross-checks and is several times faster
+/// on a populated store; the full check runs once per day.
+fn validate_database(path: &Path, full: bool) -> Result<i64, String> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|error| error.to_string())?;
+    let pragma = if full {
+        "PRAGMA integrity_check"
+    } else {
+        "PRAGMA quick_check"
+    };
     let integrity: String = connection
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .query_row(pragma, [], |row| row.get(0))
         .map_err(|error| error.to_string())?;
     if integrity != "ok" {
         return Err(format!("Backup failed integrity check: {integrity}"));
     }
-    capture_count(path)?;
-    Ok(())
+    connection
+        .query_row("SELECT count(*) FROM captures", [], |row| row.get(0))
+        .map_err(|error| error.to_string())
 }
 
 fn restore_file(source: &Path, destination: &Path) -> Result<(), String> {
@@ -479,7 +710,7 @@ mod tests {
         database
             .create_item("private capture text", ItemKind::Note, None, None, None)
             .unwrap();
-        storage.record_database_write();
+        storage.record_database_write(Some(1));
         storage.snapshot(&database).unwrap();
         drop(database);
         fs::remove_dir_all(primary.parent().unwrap()).unwrap();
@@ -585,6 +816,66 @@ mod tests {
             capture_count(&detected.backup_dir.join(DATABASE_FILE)).unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn pending_marker_tracks_writes_until_a_backup_catches_up() {
+        let root = tempfile::tempdir().unwrap();
+        let primary = root.path().join("data").join(DATABASE_FILE);
+        let backup = root.path().join("backup");
+        let storage = ProtectedStorage::prepare(primary.clone(), backup.clone()).unwrap();
+        assert!(storage.needs_startup_backup(), "no backup exists yet");
+        let database = Database::open(&primary).unwrap();
+        storage.mark_dirty();
+        assert!(backup.join(PENDING_FILE).exists());
+        database
+            .create_item("saved", ItemKind::Note, None, None, None)
+            .unwrap();
+        storage.snapshot(&database).unwrap();
+        storage.backup_caught_up();
+        assert!(!backup.join(PENDING_FILE).exists());
+        assert!(!storage.needs_startup_backup());
+        // Two backups in a row: the first runs the full check and stamps it,
+        // the second takes the quick path and still validates.
+        assert!(backup.join(FULL_CHECK_STAMP_FILE).exists());
+        storage.snapshot(&database).unwrap();
+        drop(storage);
+        let reopened = ProtectedStorage::prepare(primary, backup.clone()).unwrap();
+        reopened.mark_dirty();
+        drop(reopened);
+        let relaunched = ProtectedStorage::prepare(root.path().join("data").join(DATABASE_FILE), backup).unwrap();
+        assert!(relaunched.needs_startup_backup(), "an unflushed session leaves the marker");
+    }
+
+    #[test]
+    fn scheduler_coalesces_bursts_and_reports_catch_up_precisely() {
+        let scheduler = BackupScheduler::default();
+        assert!(!scheduler.pending());
+        for _ in 0..5 {
+            scheduler.begin_write();
+            scheduler.commit_write();
+        }
+        assert!(scheduler.pending());
+        let generation = scheduler
+            .next_job(Duration::from_millis(5), Duration::from_millis(50))
+            .unwrap();
+        assert_eq!(generation, 5, "one job covers the whole burst");
+        scheduler.begin_write(); // a write starts while the backup runs
+        assert!(!scheduler.finish_job(generation), "in-flight write keeps the marker");
+        scheduler.commit_write();
+        let generation = scheduler
+            .next_job(Duration::from_millis(5), Duration::from_millis(50))
+            .unwrap();
+        assert_eq!(generation, 6);
+        assert!(scheduler.finish_job(generation));
+        assert!(!scheduler.pending());
+        assert!(scheduler.flush(Duration::from_millis(10)), "nothing pending flushes immediately");
+        scheduler.request();
+        assert!(!scheduler.flush(Duration::from_millis(20)), "no worker: flush times out");
+        scheduler.shutdown();
+        assert!(scheduler
+            .next_job(Duration::from_millis(1), Duration::from_millis(1))
+            .is_none());
     }
 
     #[test]

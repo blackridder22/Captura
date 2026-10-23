@@ -4,10 +4,12 @@ import {
   openAccessibilitySettings,
   requestAccessibility,
   resetShortcuts,
+  setDefaultCaptureView,
   setKeepOpen,
   setShortcut,
+  setTrashRetention,
 } from "../lib/api";
-import type { AppSettings, ShortcutAction } from "../types";
+import type { AppSettings, CaptureView, ShortcutAction, TrashRetention } from "../types";
 import type { ToastTone } from "./use-notify";
 
 type SettingsActionDeps = {
@@ -83,11 +85,41 @@ export function useSettingsActions({
     announce("Clipboard captured");
   }, [announce]);
 
+  const changeTrashRetention = useCallback(
+    async (retention: TrashRetention) => {
+      try {
+        setAppSettings(await setTrashRetention(retention));
+        announce(
+          retention === "immediate"
+            ? "Deleted captures will be removed immediately"
+            : `Trash keeps captures for ${retention === "7d" ? "7" : "28"} days`,
+        );
+      } catch (error) {
+        notify(typeof error === "string" ? error : "Could not update the Trash setting.", "error");
+      }
+    },
+    [announce, notify, setAppSettings],
+  );
+
+  const changeDefaultCaptureView = useCallback(
+    async (view: CaptureView) => {
+      try {
+        setAppSettings(await setDefaultCaptureView(view));
+        announce(view === "page" ? "Captures open as a page" : "Captures open in Source");
+      } catch (error) {
+        notify(typeof error === "string" ? error : "Could not update the editor setting.", "error");
+      }
+    },
+    [announce, notify, setAppSettings],
+  );
+
   return {
     requestAccessibilityAndRefresh,
     changeShortcut,
     resetAllShortcuts,
     changeKeepOpen,
+    changeTrashRetention,
+    changeDefaultCaptureView,
     captureClipboard,
   };
 }

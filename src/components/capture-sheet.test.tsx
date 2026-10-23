@@ -14,7 +14,7 @@ vi.mock("../lib/api", () => ({
   copyItems: vi.fn(), attachmentUrl: (value: string) => value,
   onCapturesChanged: vi.fn(async (handler) => { nativeChange = handler; return vi.fn(); }),
 }));
-const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
+const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
 const second = { ...first, id: "second", content: "# Second" };
 function click(container: HTMLElement, text: string) {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === text || element.getAttribute("aria-label") === text);

@@ -3,13 +3,16 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useCaptureDetail } from "../hooks/use-capture-detail";
 import { attachmentUrl, copyItems } from "../lib/api";
 import { matchesShortcut } from "../lib/shortcuts";
-import type { CaptureDetailRequest, KeyboardShortcutSettings } from "../types";
+import type { CaptureDetailRequest, CaptureView, KeyboardShortcutSettings } from "../types";
 import { MarkdownText } from "./markdown-text";
 import { Button } from "./ui/button";
 
 type CaptureSheetProps = {
   request: CaptureDetailRequest;
   shortcuts: KeyboardShortcutSettings;
+  defaultView?: CaptureView;
+  onDefaultViewChange?: (view: CaptureView) => Promise<void>;
+  onRestore?: (id: string) => Promise<void>;
   onClose: () => void;
 };
 

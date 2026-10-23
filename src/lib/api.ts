@@ -4,16 +4,20 @@ import type {
   AppSettings,
   CaptureItem,
   CapturesChangedEvent,
+  CaptureView,
   CopyMode,
   CopyResult,
   CreateItemInput,
+  DeleteResult,
   ImageImportInput,
   ImageImportResult,
+  ItemStatus,
   PermissionRequiredEvent,
   PermissionStatus,
   QueueSnapshot,
   Section,
   ShortcutAction,
+  TrashRetention,
   UpdateItemInput,
 } from "../types";
 import { defaultShortcuts } from "./shortcuts";
@@ -37,7 +41,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
   },
@@ -49,7 +53,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "Chrome",
     sourceBundleId: "com.google.Chrome",
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: new Date(Date.now() - 11 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 11 * 60_000).toISOString(),
   },
@@ -62,7 +66,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: new Date(Date.now() - 16 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 16 * 60_000).toISOString(),
   },
@@ -74,7 +78,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: null,
     sourceBundleId: null,
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: new Date(Date.now() - 25 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
   },
@@ -86,7 +90,7 @@ const demoItems: CaptureItem[] = [
     sourceApp: "ChatGPT",
     sourceBundleId: "com.openai.chat",
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: new Date(Date.now() - 36 * 60_000).toISOString(),
     updatedAt: new Date(Date.now() - 36 * 60_000).toISOString(),
   },
@@ -166,7 +170,7 @@ export async function createItem(input: CreateItemInput) {
     sourceApp: input.sourceApp ?? null,
     sourceBundleId: null,
     sectionId: null,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -218,11 +222,80 @@ export async function toggleItem(id: string) {
   return updated.find((item) => item.id === id)!;
 }
 
-export async function deleteItem(id: string) {
+/// Delete honors the Trash retention setting: rows are trashed (returned as
+/// upserts with `deletedAt`) or, with Immediate retention, purged.
+export async function deleteItems(ids: string[]): Promise<DeleteResult> {
   if (isTauriRuntime()) {
-    return invoke<void>("delete_item", { id });
+    return invoke<DeleteResult>("delete_items", { ids });
   }
-  writeDemoItems(readDemoItems().filter((item) => item.id !== id));
+  const wanted = new Set(ids);
+  if (readDemoSettings().trashRetention === "immediate") {
+    const purgedIds = readDemoItems().filter((item) => wanted.has(item.id)).map((item) => item.id);
+    writeDemoItems(readDemoItems().filter((item) => !wanted.has(item.id)));
+    return { trashed: [], purgedIds };
+  }
+  const now = new Date().toISOString();
+  const updated = readDemoItems().map((item) =>
+    wanted.has(item.id) && item.deletedAt === null ? { ...item, deletedAt: now, updatedAt: now } : item,
+  );
+  writeDemoItems(updated);
+  return { trashed: updated.filter((item) => wanted.has(item.id) && item.deletedAt === now), purgedIds: [] };
+}
+
+export async function deleteItem(id: string) {
+  return deleteItems([id]);
+}
+
+export async function restoreItems(ids: string[]): Promise<CaptureItem[]> {
+  if (isTauriRuntime()) {
+    return invoke<CaptureItem[]>("restore_items", { ids });
+  }
+  const wanted = new Set(ids);
+  const now = new Date().toISOString();
+  const updated = readDemoItems().map((item) =>
+    wanted.has(item.id) && item.deletedAt !== null ? { ...item, deletedAt: null, updatedAt: now } : item,
+  );
+  writeDemoItems(updated);
+  return updated.filter((item) => wanted.has(item.id) && item.updatedAt === now);
+}
+
+export async function purgeItems(ids: string[]): Promise<string[]> {
+  if (isTauriRuntime()) {
+    return invoke<string[]>("purge_items", { ids });
+  }
+  const wanted = new Set(ids);
+  const purged = readDemoItems().filter((item) => wanted.has(item.id)).map((item) => item.id);
+  writeDemoItems(readDemoItems().filter((item) => !wanted.has(item.id)));
+  return purged;
+}
+
+export async function emptyTrash(): Promise<string[]> {
+  if (isTauriRuntime()) {
+    return invoke<string[]>("empty_trash");
+  }
+  const purged = readDemoItems().filter((item) => item.deletedAt !== null).map((item) => item.id);
+  writeDemoItems(readDemoItems().filter((item) => item.deletedAt === null));
+  return purged;
+}
+
+export async function purgeExpiredTrash(): Promise<string[]> {
+  if (isTauriRuntime()) {
+    return invoke<string[]>("purge_expired_trash");
+  }
+  return [];
+}
+
+export async function setItemsStatus(ids: string[], status: ItemStatus): Promise<CaptureItem[]> {
+  if (isTauriRuntime()) {
+    return invoke<CaptureItem[]>("set_items_status", { ids, status });
+  }
+  const wanted = new Set(ids);
+  const now = new Date().toISOString();
+  const updated = readDemoItems().map((item) =>
+    wanted.has(item.id) ? { ...item, status, updatedAt: now } : item,
+  );
+  writeDemoItems(updated);
+  return updated.filter((item) => wanted.has(item.id));
 }
 
 type DemoCopyPayload =
@@ -403,13 +476,16 @@ export async function mergeItems(ids: string[]) {
     sourceApp: null,
     sourceBundleId: null,
     sectionId,
-    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+    attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: now,
     updatedAt: now,
   };
+  // Sources go to Trash like a delete would, so a merge stays reversible.
   writeDemoItems([
     merged,
-    ...readDemoItems().filter((item) => !ids.includes(item.id)),
+    ...readDemoItems().map((item) =>
+      ids.includes(item.id) ? { ...item, deletedAt: now, updatedAt: now } : item,
+    ),
   ]);
   return merged;
 }
@@ -495,9 +571,11 @@ function readDemoSettings(): AppSettings {
     return {
       shortcuts: { ...defaultShortcuts, ...stored.shortcuts },
       keepOpen: stored.keepOpen ?? false,
+      trashRetention: stored.trashRetention ?? "7d",
+      defaultCaptureView: stored.defaultCaptureView ?? "page",
     };
   } catch {
-    return { shortcuts: { ...defaultShortcuts }, keepOpen: false };
+    return { shortcuts: { ...defaultShortcuts }, keepOpen: false, trashRetention: "7d", defaultCaptureView: "page" };
   }
 }
 
@@ -543,6 +621,20 @@ export async function setKeepOpen(keepOpen: boolean) {
     return invoke<AppSettings>("set_keep_open", { keepOpen });
   }
   return writeDemoSettings({ ...readDemoSettings(), keepOpen });
+}
+
+export async function setTrashRetention(retention: TrashRetention) {
+  if (isTauriRuntime()) {
+    return invoke<AppSettings>("set_trash_retention", { retention });
+  }
+  return writeDemoSettings({ ...readDemoSettings(), trashRetention: retention });
+}
+
+export async function setDefaultCaptureView(view: CaptureView) {
+  if (isTauriRuntime()) {
+    return invoke<AppSettings>("set_default_capture_view", { view });
+  }
+  return writeDemoSettings({ ...readDemoSettings(), defaultCaptureView: view });
 }
 
 export async function captureClipboardNow() {

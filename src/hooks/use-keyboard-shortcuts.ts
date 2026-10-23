@@ -17,11 +17,15 @@ type KeyboardShortcutDeps = {
   selectedIds: string[];
   selectedItems: CaptureItem[];
   moveBy: (direction: 1 | -1, preserveSelection: boolean) => void;
+  selectAll: () => void;
   copySelected: (asList: boolean) => Promise<void>;
   mergeSelected: () => Promise<void>;
   markSelectedDone: () => Promise<void>;
   handlePaste: (id: string) => Promise<void>;
   handleDeleteSelected: () => Promise<void>;
+  /// Trash view: Enter/paste/done are inert and Delete purges.
+  inTrash?: boolean;
+  purgeSelected?: () => Promise<void>;
 };
 
 export function useKeyboardShortcuts({
@@ -36,11 +40,14 @@ export function useKeyboardShortcuts({
   selectedIds,
   selectedItems,
   moveBy,
+  selectAll,
   copySelected,
   mergeSelected,
   markSelectedDone,
   handlePaste,
   handleDeleteSelected,
+  inTrash = false,
+  purgeSelected,
 }: KeyboardShortcutDeps) {
   useEffect(() => {
     if (suspended) return;
@@ -76,10 +83,18 @@ export function useKeyboardShortcuts({
         return;
       }
 
+      // Text surfaces keep their native keys, ⌘A included (CodeMirror and
+      // ProseMirror both render contenteditable roots).
       const target = event.target instanceof Element ? event.target : null;
       if (
-        target?.closest("input, textarea, [contenteditable='true']")
+        target?.closest("input, textarea, [contenteditable='true'], .cm-editor, .ProseMirror")
       ) {
+        return;
+      }
+
+      if (matchesShortcut(event, shortcuts.selectAll)) {
+        event.preventDefault();
+        selectAll();
         return;
       }
 
@@ -101,6 +116,14 @@ export function useKeyboardShortcuts({
         if (window.getSelection()?.toString()) return;
         event.preventDefault();
         void copySelected(false);
+        return;
+      }
+
+      if (inTrash) {
+        if (matchesShortcut(event, shortcuts.delete) && selectedId) {
+          event.preventDefault();
+          void purgeSelected?.();
+        }
         return;
       }
 
@@ -150,11 +173,14 @@ export function useKeyboardShortcuts({
     markSelectedDone,
     mergeSelected,
     moveBy,
+    selectAll,
     openSettings,
     searchRef,
     selectedId,
     selectedIds,
     selectedItems,
     onEdit,
+    inTrash,
+    purgeSelected,
   ]);
 }

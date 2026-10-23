@@ -2,7 +2,7 @@
 //! service validates and decodes off the UI thread, then publishes one batch.
 use crate::{
     attachments_dir,
-    database::{CaptureItem, Database, DatabaseError, ItemKind, NewImage},
+    database::{CaptureItem, Database, ItemKind, NewImage},
     image_import::{
         ImageImportService, ImageInput, ImportBatchResult, ImportRequest, Persisted,
         PreparedThumbnail,
@@ -92,15 +92,8 @@ pub fn import_blocking(
 }
 
 fn current_imported_items(database: &Database, ids: &[String]) -> Result<Vec<CaptureItem>, String> {
-    let mut items = Vec::with_capacity(ids.len());
-    for id in ids {
-        match database.get_item(id) {
-            Ok(item) => items.push(item),
-            Err(DatabaseError::NotFound) => {}
-            Err(error) => return Err(error.to_string()),
-        }
-    }
-    Ok(items)
+    // One IN query; captures deleted while later images decoded are skipped.
+    database.get_items(ids).map_err(|error| error.to_string())
 }
 
 async fn import(
@@ -382,13 +375,12 @@ pub async fn cleanup_image_files(app: AppHandle) -> Result<(), String> {
     };
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
+        // Trashed captures keep their files until purged, so they stay referenced.
         let paths: HashSet<_> = state
             .database
-            .list_items()
+            .list_attachment_paths()
             .map_err(|e| e.to_string())?
             .into_iter()
-            .flat_map(|item| [item.attachment_path, item.thumbnail_path])
-            .flatten()
             .map(PathBuf::from)
             .collect();
         let report = state.image_imports.cleanup(&attachments_dir()?, &paths)?;

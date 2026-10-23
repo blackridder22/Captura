@@ -47,15 +47,7 @@ export function filterItems(
   const normalizedQuery = query.trim().toLocaleLowerCase();
 
   return items.filter((item) => {
-    const matchesFilter =
-      filter === "inbox"
-        ? item.status === "open"
-        : filter === "done"
-          ? item.status === "done"
-          : item.status === "open" &&
-            item.kind === (filter === "prompts" ? "prompt" : "note");
-
-    if (!matchesFilter) {
+    if (!matchesQueueFilter(item, filter)) {
       return false;
     }
 
@@ -63,12 +55,36 @@ export function filterItems(
       return true;
     }
 
-    return [item.content, item.sourceApp, item.kind]
-      .filter(Boolean)
-      .some((value) =>
-        value?.toLocaleLowerCase().includes(normalizedQuery),
-      );
+    return searchText(item).includes(normalizedQuery);
   });
+}
+
+/// Trash is its own world: trashed captures never appear in the live filters
+/// and live captures never appear in Trash.
+export function matchesQueueFilter(item: CaptureItem, filter: QueueFilter) {
+  if (filter === "trash") return item.deletedAt !== null;
+  if (item.deletedAt !== null) return false;
+  if (filter === "inbox") return item.status === "open";
+  if (filter === "done") return item.status === "done";
+  return (
+    item.status === "open" &&
+    item.kind === (filter === "prompts" ? "prompt" : "note")
+  );
+}
+
+// Lowercasing the full content on every keystroke dominated search cost;
+// cache per capture version instead (content only changes with updatedAt).
+const searchTextCache = new WeakMap<CaptureItem, string>();
+export function searchText(item: CaptureItem) {
+  let cached = searchTextCache.get(item);
+  if (cached === undefined) {
+    cached = [item.content, item.sourceApp, item.kind]
+      .filter(Boolean)
+      .join("\n")
+      .toLocaleLowerCase();
+    searchTextCache.set(item, cached);
+  }
+  return cached;
 }
 
 export function applySectionFilter(
@@ -82,17 +98,43 @@ export function applySectionFilter(
   return items.filter((item) => item.sectionId === sectionFilter);
 }
 
-export function countItems(items: CaptureItem[]) {
-  return {
-    inbox: items.filter((item) => item.status === "open").length,
-    prompts: items.filter(
-      (item) => item.status === "open" && item.kind === "prompt",
-    ).length,
-    notes: items.filter(
-      (item) => item.status === "open" && item.kind === "note",
-    ).length,
-    done: items.filter((item) => item.status === "done").length,
-  };
+export function countItems(items: CaptureItem[]): Record<QueueFilter, number> {
+  const counts = { inbox: 0, prompts: 0, notes: 0, done: 0, trash: 0 };
+  for (const item of items) {
+    if (item.deletedAt !== null) {
+      counts.trash += 1;
+    } else if (item.status === "done") {
+      counts.done += 1;
+    } else {
+      counts.inbox += 1;
+      if (item.kind === "prompt") counts.prompts += 1;
+      else if (item.kind === "note") counts.notes += 1;
+    }
+  }
+  return counts;
+}
+
+export const trashRetentionLabel: Record<"immediate" | "7d" | "28d", string> = {
+  immediate: "Deleted captures are removed immediately.",
+  "7d": "Auto-deletes after 7 days.",
+  "28d": "Auto-deletes after 28 days.",
+};
+
+/** Title for the capture page: first non-empty line, Markdown markers stripped. */
+export function captureTitle(content: string, fallback = "Untitled capture") {
+  const line = content
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => value.length > 0);
+  if (!line) return fallback;
+  const plain = line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+(\[[ xX]\]\s+)?/, "")
+    .replace(/^\d+\.\s+/, "")
+    .replace(/^>\s+/, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+  return plain || fallback;
 }
 
 export function formatCaptureTime(iso: string) {

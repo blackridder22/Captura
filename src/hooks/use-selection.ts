@@ -25,9 +25,10 @@ export function useSelection(visibleItems: CaptureItem[]) {
     });
   }, [selectedId, visibleItems]);
 
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedItems = useMemo(
-    () => visibleItems.filter((item) => selectedIds.includes(item.id)),
-    [selectedIds, visibleItems],
+    () => visibleItems.filter((item) => selectedIdSet.has(item.id)),
+    [selectedIdSet, visibleItems],
   );
 
   const actionItems = useMemo(() => {
@@ -54,6 +55,20 @@ export function useSelection(visibleItems: CaptureItem[]) {
     setSelectedId(null);
     setSelectedIds([]);
   }, []);
+
+  /// Drops the multi-selection but keeps focus where it is (Escape).
+  const clearMultiSelection = useCallback(() => {
+    setSelectedIds([]);
+  }, []);
+
+  /// ⌘A: every visible capture, focus staying put (or on the first row).
+  const selectAll = useCallback(() => {
+    if (!visibleItems.length) return;
+    setSelectedIds(visibleItems.map((item) => item.id));
+    setSelectedId((current) =>
+      current && visibleItems.some((item) => item.id === current) ? current : visibleItems[0]!.id,
+    );
+  }, [visibleItems]);
 
   const selectWith = useCallback(
     (targetId: string, options: { toggle: boolean }) => {
@@ -86,19 +101,22 @@ export function useSelection(visibleItems: CaptureItem[]) {
   );
 
   const isSelected = useCallback(
-    (id: string) => selectedIds.includes(id),
-    [selectedIds],
+    (id: string) => selectedIdSet.has(id),
+    [selectedIdSet],
   );
 
   return {
     selectedId,
     selectedIds,
+    selectedIdSet,
     selectedItems,
     actionIds,
     actionItems,
     seedIfEmpty,
     setSingle,
     clear,
+    clearMultiSelection,
+    selectAll,
     selectWith,
     moveBy,
     isSelected,

@@ -1,10 +1,12 @@
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
 use chrono::Utc;
-use rusqlite::{params, Connection, DatabaseName, OptionalExtension, Row};
+use rusqlite::{params, Connection, DatabaseName, OptionalExtension, Row, ToSql};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -104,6 +106,20 @@ ALTER TABLE captures ADD COLUMN image_height INTEGER;
 PRAGMA user_version = 5;
 "#;
 
+// Trash: a nullable timestamp instead of a new status value, so the kind/status
+// CHECK constraints stay untouched and every existing query keeps working.
+const MIGRATION_006: &str = r#"
+ALTER TABLE captures ADD COLUMN deleted_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_captures_created_at
+ON captures(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_captures_deleted_at
+ON captures(deleted_at) WHERE deleted_at IS NOT NULL;
+
+PRAGMA user_version = 6;
+"#;
+
 pub struct NewImage<'a> {
     pub content: &'a str,
     pub attachment_path: &'a str,
@@ -169,7 +185,7 @@ pub enum ItemStatus {
 }
 
 impl ItemStatus {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Open => "open",
             Self::Done => "done",
@@ -200,6 +216,8 @@ pub struct CaptureItem {
     pub image_height: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
+    /// Set while the capture sits in Trash. Purging removes the row entirely.
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -209,6 +227,11 @@ pub struct Section {
     pub name: String,
     pub created_at: String,
 }
+
+/// Column list shared by every SELECT/RETURNING so `map_capture` stays in sync.
+const CAPTURE_COLUMNS: &str = "id, kind, content, status, source_app, source_bundle_id, \
+     section_id, attachment_path, created_at, updated_at, thumbnail_path, image_width, \
+     image_height, deleted_at";
 
 pub struct Database {
     connection: Mutex<Connection>,
@@ -228,8 +251,16 @@ impl Database {
         }
 
         let mut connection = Connection::open(path)?;
+        connection.busy_timeout(Duration::from_secs(5))?;
+        connection.set_prepared_statement_cache_capacity(64);
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
+        // WAL + NORMAL is durable across application crashes; only a power
+        // loss can drop the last transactions, which the local backup covers.
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
+        connection.pragma_update(None, "temp_store", "MEMORY")?;
+        connection.pragma_update(None, "cache_size", -16_000)?;
+        connection.pragma_update(None, "mmap_size", 67_108_864_i64)?;
         let version =
             connection.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))?;
         for (index, migration) in [
@@ -238,6 +269,7 @@ impl Database {
             MIGRATION_003,
             MIGRATION_004,
             MIGRATION_005,
+            MIGRATION_006,
         ]
         .iter()
         .enumerate()
@@ -263,23 +295,83 @@ impl Database {
         Ok(result == "ok")
     }
 
+    /// Folds the WAL back into the main file. The process never closes the
+    /// connection cleanly, so without this the WAL grows across launches.
+    pub fn checkpoint(&self, truncate: bool) -> Result<(), DatabaseError> {
+        let connection = self.connection()?;
+        // PASSIVE never blocks on readers; TRUNCATE also resets the WAL file
+        // and is reserved for exit, when nothing else holds the connection.
+        let mut statement = connection.prepare(if truncate {
+            "PRAGMA wal_checkpoint(TRUNCATE)"
+        } else {
+            "PRAGMA wal_checkpoint(PASSIVE)"
+        })?;
+        statement.query_row([], |_| Ok(()))?;
+        Ok(())
+    }
+
+    pub fn optimize(&self) -> Result<(), DatabaseError> {
+        let connection = self.connection()?;
+        connection.execute_batch("PRAGMA optimize")?;
+        Ok(())
+    }
+
+    pub fn count_items(&self) -> Result<i64, DatabaseError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare_cached("SELECT count(*) FROM captures")?;
+        statement.query_row([], |row| row.get(0)).map_err(Into::into)
+    }
+
+    /// Every capture, including trashed ones (`deleted_at` set). Readers that
+    /// must ignore Trash filter on `deleted_at`; file cleanup must not.
     pub fn list_items(&self) -> Result<Vec<CaptureItem>, DatabaseError> {
         let connection = self.connection()?;
-        let mut statement = connection.prepare(
-            "SELECT id, kind, content, status, source_app, source_bundle_id,
-                    section_id, attachment_path, created_at, updated_at,
-                    thumbnail_path, image_width, image_height
-             FROM captures
-             ORDER BY created_at DESC",
-        )?;
-
+        let mut statement = connection.prepare_cached(&format!(
+            "SELECT {CAPTURE_COLUMNS} FROM captures ORDER BY created_at DESC"
+        ))?;
         let rows = statement.query_map([], map_capture)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn list_trashed(&self) -> Result<Vec<CaptureItem>, DatabaseError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare_cached(&format!(
+            "SELECT {CAPTURE_COLUMNS} FROM captures WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC"
+        ))?;
+        let rows = statement.query_map([], map_capture)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Paths of every stored image file (trashed captures included), for
+    /// orphan cleanup without loading capture text.
+    pub fn list_attachment_paths(&self) -> Result<Vec<String>, DatabaseError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare_cached(
+            "SELECT attachment_path, thumbnail_path FROM captures WHERE kind = 'image'",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
+        })?;
+        let mut paths = Vec::new();
+        for row in rows {
+            let (original, thumbnail) = row?;
+            paths.extend([original, thumbnail].into_iter().flatten());
+        }
+        Ok(paths)
     }
 
     pub fn get_item(&self, id: &str) -> Result<CaptureItem, DatabaseError> {
         let connection = self.connection()?;
         query_capture(&connection, id)
+    }
+
+    /// Captures in the requested order; ids that no longer exist are skipped.
+    pub fn get_items(&self, ids: &[String]) -> Result<Vec<CaptureItem>, DatabaseError> {
+        let connection = self.connection()?;
+        query_captures(&connection, ids)
     }
 
     pub fn create_item(
@@ -295,27 +387,30 @@ impl Database {
         }
 
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = now_rfc3339();
         let connection = self.connection()?;
-        connection.execute(
+        let mut statement = connection.prepare_cached(&format!(
             "INSERT INTO captures (
                 id, kind, content, status, source_app, source_bundle_id,
                 section_id, attachment_path, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?8)",
-            params![
-                id,
-                kind.as_str(),
-                content,
-                ItemStatus::Open.as_str(),
-                source_app,
-                source_bundle_id,
-                attachment_path,
-                now,
-            ],
-        )?;
-        drop(connection);
-
-        self.get_item(&id)
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?8)
+             RETURNING {CAPTURE_COLUMNS}"
+        ))?;
+        statement
+            .query_row(
+                params![
+                    id,
+                    kind.as_str(),
+                    content,
+                    ItemStatus::Open.as_str(),
+                    source_app,
+                    source_bundle_id,
+                    attachment_path,
+                    now,
+                ],
+                map_capture,
+            )
+            .map_err(Into::into)
     }
 
     pub fn create_image_item(
@@ -408,8 +503,9 @@ impl Database {
             return Err(DatabaseError::EmptyContent);
         }
 
-        let connection = self.connection()?;
-        let existing: Option<(String, String)> = connection
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let existing: Option<(String, String)> = transaction
             .query_row(
                 "SELECT updated_at, kind FROM captures WHERE id = ?1",
                 [id],
@@ -430,46 +526,71 @@ impl Database {
                 updated_at = previous.with_timezone(&Utc) + chrono::Duration::nanoseconds(1);
             }
         }
-        let changed = connection.execute(
-            "UPDATE captures
-             SET content = ?2, kind = ?3, updated_at = ?4
-             WHERE id = ?1",
-            params![id, content, kind.as_str(), updated_at.to_rfc3339()],
-        )?;
-        drop(connection);
-
-        if changed == 0 {
-            return Err(DatabaseError::NotFound);
-        }
-        self.get_item(id)
+        let item = {
+            let mut statement = transaction.prepare_cached(&format!(
+                "UPDATE captures SET content = ?2, kind = ?3, updated_at = ?4
+                 WHERE id = ?1 RETURNING {CAPTURE_COLUMNS}"
+            ))?;
+            statement
+                .query_row(
+                    params![id, content, kind.as_str(), updated_at.to_rfc3339()],
+                    map_capture,
+                )
+                .optional()?
+                .ok_or(DatabaseError::NotFound)?
+        };
+        transaction.commit()?;
+        Ok(item)
     }
 
     pub fn toggle_item(&self, id: &str) -> Result<CaptureItem, DatabaseError> {
-        let item = self.get_item(id)?;
-        let next_status = if item.status == ItemStatus::Open {
-            ItemStatus::Done
-        } else {
-            ItemStatus::Open
-        };
-        self.set_status(id, next_status)
+        let connection = self.connection()?;
+        let mut statement = connection.prepare_cached(&format!(
+            "UPDATE captures
+             SET status = CASE status WHEN 'open' THEN 'done' ELSE 'open' END, updated_at = ?2
+             WHERE id = ?1 RETURNING {CAPTURE_COLUMNS}"
+        ))?;
+        statement
+            .query_row(params![id, now_rfc3339()], map_capture)
+            .optional()?
+            .ok_or(DatabaseError::NotFound)
     }
 
     pub fn set_status(&self, id: &str, status: ItemStatus) -> Result<CaptureItem, DatabaseError> {
         let connection = self.connection()?;
-        let changed = connection.execute(
-            "UPDATE captures
-             SET status = ?2, updated_at = ?3
-             WHERE id = ?1",
-            params![id, status.as_str(), Utc::now().to_rfc3339()],
-        )?;
-        drop(connection);
-
-        if changed == 0 {
-            return Err(DatabaseError::NotFound);
-        }
-        self.get_item(id)
+        let mut statement = connection.prepare_cached(&format!(
+            "UPDATE captures SET status = ?2, updated_at = ?3
+             WHERE id = ?1 RETURNING {CAPTURE_COLUMNS}"
+        ))?;
+        statement
+            .query_row(params![id, status.as_str(), now_rfc3339()], map_capture)
+            .optional()?
+            .ok_or(DatabaseError::NotFound)
     }
 
+    /// One transaction for the whole selection. Missing ids are skipped so a
+    /// capture deleted elsewhere cannot fail the rest of the batch.
+    pub fn set_items_status(
+        &self,
+        ids: &[String],
+        status: ItemStatus,
+    ) -> Result<Vec<CaptureItem>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let now = now_rfc3339();
+        let sql = format!(
+            "UPDATE captures SET status = ?1, updated_at = ?2 WHERE id IN ({})
+             RETURNING {CAPTURE_COLUMNS}",
+            placeholders(3, ids.len())
+        );
+        let leading: [&dyn ToSql; 2] = [&status.as_str(), &now];
+        update_returning(&connection, &sql, &leading, ids)
+    }
+
+    /// Permanent removal of one capture. Production paths use `purge_items`.
+    #[cfg(test)]
     pub fn delete_item(&self, id: &str) -> Result<(), DatabaseError> {
         let connection = self.connection()?;
         let changed = connection.execute("DELETE FROM captures WHERE id = ?1", [id])?;
@@ -479,10 +600,84 @@ impl Database {
         Ok(())
     }
 
+    /// Soft delete: the rows stay (with files) until restored or purged.
+    pub fn trash_items(&self, ids: &[String]) -> Result<Vec<CaptureItem>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let now = now_rfc3339();
+        let sql = format!(
+            "UPDATE captures SET deleted_at = ?1, updated_at = ?1
+             WHERE deleted_at IS NULL AND id IN ({}) RETURNING {CAPTURE_COLUMNS}",
+            placeholders(2, ids.len())
+        );
+        let leading: [&dyn ToSql; 1] = [&now];
+        update_returning(&connection, &sql, &leading, ids)
+    }
+
+    pub fn restore_items(&self, ids: &[String]) -> Result<Vec<CaptureItem>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let now = now_rfc3339();
+        let sql = format!(
+            "UPDATE captures SET deleted_at = NULL, updated_at = ?1
+             WHERE deleted_at IS NOT NULL AND id IN ({}) RETURNING {CAPTURE_COLUMNS}",
+            placeholders(2, ids.len())
+        );
+        let leading: [&dyn ToSql; 1] = [&now];
+        update_returning(&connection, &sql, &leading, ids)
+    }
+
+    /// Hard delete. Returns the removed rows so callers can delete their files.
+    pub fn purge_items(&self, ids: &[String]) -> Result<Vec<CaptureItem>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.connection()?;
+        let sql = format!(
+            "DELETE FROM captures WHERE id IN ({}) RETURNING {CAPTURE_COLUMNS}",
+            placeholders(1, ids.len())
+        );
+        update_returning(&connection, &sql, &[], ids)
+    }
+
+    pub fn empty_trash(&self) -> Result<Vec<CaptureItem>, DatabaseError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare_cached(&format!(
+            "DELETE FROM captures WHERE deleted_at IS NOT NULL RETURNING {CAPTURE_COLUMNS}"
+        ))?;
+        let rows = statement.query_map([], map_capture)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Purges trashed captures whose `deleted_at` is older than `cutoff`.
+    /// Timestamps are compared after parsing so mixed RFC 3339 spellings
+    /// (`Z` vs `+00:00`, 6 vs 9 fractional digits) never misorder.
+    pub fn purge_trashed_before(
+        &self,
+        cutoff: chrono::DateTime<Utc>,
+    ) -> Result<Vec<CaptureItem>, DatabaseError> {
+        let expired: Vec<String> = self
+            .list_trashed()?
+            .into_iter()
+            .filter(|item| {
+                item.deleted_at
+                    .as_deref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .is_some_and(|deleted| deleted.with_timezone(&Utc) < cutoff)
+            })
+            .map(|item| item.id)
+            .collect();
+        self.purge_items(&expired)
+    }
+
     pub fn list_sections(&self) -> Result<Vec<Section>, DatabaseError> {
         let connection = self.connection()?;
         let mut statement =
-            connection.prepare("SELECT id, name, created_at FROM sections ORDER BY name")?;
+            connection.prepare_cached("SELECT id, name, created_at FROM sections ORDER BY name")?;
         let rows = statement.query_map([], |row| {
             Ok(Section {
                 id: row.get(0)?,
@@ -502,24 +697,26 @@ impl Database {
         let section = Section {
             id: Uuid::new_v4().to_string(),
             name: name.to_string(),
-            created_at: Utc::now().to_rfc3339(),
+            created_at: now_rfc3339(),
         };
         let connection = self.connection()?;
-        connection.execute(
-            "INSERT INTO sections (id, name, created_at) VALUES (?1, ?2, ?3)",
-            params![section.id, section.name, section.created_at],
-        )?;
+        let mut statement = connection
+            .prepare_cached("INSERT INTO sections (id, name, created_at) VALUES (?1, ?2, ?3)")?;
+        statement.execute(params![section.id, section.name, section.created_at])?;
         Ok(section)
     }
 
+    /// Unfiles the section's captures (bumping `updated_at` so change events
+    /// apply) and removes the section in one transaction.
     pub fn delete_section(&self, id: &str) -> Result<Vec<CaptureItem>, DatabaseError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        let capture_ids = {
-            let mut statement = transaction.prepare(
-                "SELECT id FROM captures WHERE section_id = ?1 ORDER BY created_at DESC",
-            )?;
-            let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+        let mut items = {
+            let mut statement = transaction.prepare_cached(&format!(
+                "UPDATE captures SET section_id = NULL, updated_at = ?2
+                 WHERE section_id = ?1 RETURNING {CAPTURE_COLUMNS}"
+            ))?;
+            let rows = statement.query_map(params![id, now_rfc3339()], map_capture)?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
         let changed = transaction.execute("DELETE FROM sections WHERE id = ?1", [id])?;
@@ -527,12 +724,8 @@ impl Database {
             return Err(DatabaseError::NotFound);
         }
         transaction.commit()?;
-        drop(connection);
-
-        capture_ids
-            .iter()
-            .map(|capture_id| self.get_item(capture_id))
-            .collect()
+        items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(items)
     }
 
     pub fn move_items_to_section(
@@ -540,31 +733,39 @@ impl Database {
         ids: &[String],
         section_id: Option<&str>,
     ) -> Result<Vec<CaptureItem>, DatabaseError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
-        for id in ids {
-            let changed = transaction.execute(
-                "UPDATE captures
-                 SET section_id = ?2, updated_at = ?3
-                 WHERE id = ?1",
-                params![id, section_id, Utc::now().to_rfc3339()],
-            )?;
-            if changed == 0 {
-                return Err(DatabaseError::NotFound);
-            }
+        let now = now_rfc3339();
+        let sql = format!(
+            "UPDATE captures SET section_id = ?1, updated_at = ?2 WHERE id IN ({})
+             RETURNING {CAPTURE_COLUMNS}",
+            placeholders(3, ids.len())
+        );
+        let leading: [&dyn ToSql; 2] = [&section_id, &now];
+        let items = update_returning(&transaction, &sql, &leading, ids)?;
+        let distinct = ids.iter().collect::<std::collections::HashSet<_>>().len();
+        if items.len() != distinct {
+            return Err(DatabaseError::NotFound);
         }
         transaction.commit()?;
-        drop(connection);
-
-        ids.iter().map(|id| self.get_item(id)).collect()
+        Ok(items)
     }
 
-    pub fn merge_items(&self, ids: &[String]) -> Result<CaptureItem, DatabaseError> {
-        let items = ids
-            .iter()
-            .map(|id| self.get_item(id))
-            .collect::<Result<Vec<_>, _>>()?;
-        if items.is_empty() {
+    /// Merges text captures into one note. Sources are trashed (restorable)
+    /// or purged when `trash_sources` is false. Returns the merged capture and
+    /// the sources' final rows.
+    pub fn merge_items(
+        &self,
+        ids: &[String],
+        trash_sources: bool,
+    ) -> Result<(CaptureItem, Vec<CaptureItem>), DatabaseError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let items = query_captures(&transaction, ids)?;
+        if items.is_empty() || items.len() != ids.len() {
             return Err(DatabaseError::NotFound);
         }
         if items.iter().any(|item| item.kind == ItemKind::Image) {
@@ -583,52 +784,100 @@ impl Database {
             .then_some(first_section)
             .flatten();
         let id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = now_rfc3339();
 
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction()?;
-        transaction.execute(
-            "INSERT INTO captures (
-                id, kind, content, status, source_app, source_bundle_id,
-                section_id, attachment_path, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, NULL, ?6, ?6)",
-            params![
-                id,
-                ItemKind::Note.as_str(),
-                content,
-                ItemStatus::Open.as_str(),
-                section_id,
-                now,
-            ],
-        )?;
-        for item in &items {
-            transaction.execute("DELETE FROM captures WHERE id = ?1", [&item.id])?;
-        }
+        let merged = {
+            let mut statement = transaction.prepare_cached(&format!(
+                "INSERT INTO captures (
+                    id, kind, content, status, source_app, source_bundle_id,
+                    section_id, attachment_path, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, NULL, ?6, ?6)
+                 RETURNING {CAPTURE_COLUMNS}"
+            ))?;
+            statement.query_row(
+                params![
+                    id,
+                    ItemKind::Note.as_str(),
+                    content,
+                    ItemStatus::Open.as_str(),
+                    section_id,
+                    now,
+                ],
+                map_capture,
+            )?
+        };
+        let sources = if trash_sources {
+            let sql = format!(
+                "UPDATE captures SET deleted_at = ?1, updated_at = ?1
+                 WHERE id IN ({}) RETURNING {CAPTURE_COLUMNS}",
+                placeholders(2, ids.len())
+            );
+            let leading: [&dyn ToSql; 1] = [&now];
+            update_returning(&transaction, &sql, &leading, ids)?
+        } else {
+            let sql = format!(
+                "DELETE FROM captures WHERE id IN ({}) RETURNING {CAPTURE_COLUMNS}",
+                placeholders(1, ids.len())
+            );
+            update_returning(&transaction, &sql, &[], ids)?
+        };
         transaction.commit()?;
-        drop(connection);
-
-        self.get_item(&id)
+        Ok((merged, sources))
     }
 
     pub fn setting(&self, key: &str) -> Result<Option<String>, DatabaseError> {
         let connection = self.connection()?;
-        connection
-            .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
-                row.get(0)
-            })
+        let mut statement =
+            connection.prepare_cached("SELECT value FROM settings WHERE key = ?1")?;
+        statement
+            .query_row([key], |row| row.get(0))
             .optional()
             .map_err(Into::into)
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<(), DatabaseError> {
         let connection = self.connection()?;
-        connection.execute(
+        let mut statement = connection.prepare_cached(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
         )?;
+        statement.execute(params![key, value])?;
         Ok(())
     }
+}
+
+fn now_rfc3339() -> String {
+    Utc::now().to_rfc3339()
+}
+
+/// `?from, ?from+1, …` for an IN list.
+fn placeholders(from: usize, count: usize) -> String {
+    (from..from + count)
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Runs an UPDATE/DELETE … RETURNING over `leading` params followed by `ids`,
+/// returning rows in the order the ids were requested.
+fn update_returning(
+    connection: &Connection,
+    sql: &str,
+    leading: &[&dyn ToSql],
+    ids: &[String],
+) -> Result<Vec<CaptureItem>, DatabaseError> {
+    let mut params: Vec<&dyn ToSql> = leading.to_vec();
+    params.extend(ids.iter().map(|id| id as &dyn ToSql));
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map(params.as_slice(), map_capture)?;
+    let rows = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(order_by_ids(ids, rows))
+}
+
+fn order_by_ids(ids: &[String], rows: Vec<CaptureItem>) -> Vec<CaptureItem> {
+    let mut by_id: HashMap<String, CaptureItem> =
+        rows.into_iter().map(|item| (item.id.clone(), item)).collect();
+    ids.iter().filter_map(|id| by_id.remove(id)).collect()
 }
 
 fn apply_migration(connection: &mut Connection, migration: &str) -> Result<(), DatabaseError> {
@@ -641,17 +890,24 @@ fn apply_migration(connection: &mut Connection, migration: &str) -> Result<(), D
 }
 
 fn query_capture(connection: &Connection, id: &str) -> Result<CaptureItem, DatabaseError> {
-    connection
-        .query_row(
-            "SELECT id, kind, content, status, source_app, source_bundle_id,
-                section_id, attachment_path, created_at, updated_at,
-                thumbnail_path, image_width, image_height
-         FROM captures WHERE id = ?1",
-            [id],
-            map_capture,
-        )
+    let mut statement = connection.prepare_cached(&format!(
+        "SELECT {CAPTURE_COLUMNS} FROM captures WHERE id = ?1"
+    ))?;
+    statement
+        .query_row([id], map_capture)
         .optional()?
         .ok_or(DatabaseError::NotFound)
+}
+
+fn query_captures(connection: &Connection, ids: &[String]) -> Result<Vec<CaptureItem>, DatabaseError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT {CAPTURE_COLUMNS} FROM captures WHERE id IN ({})",
+        placeholders(1, ids.len())
+    );
+    update_returning(connection, &sql, &[], ids)
 }
 
 fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
@@ -672,6 +928,7 @@ fn map_capture(row: &Row<'_>) -> rusqlite::Result<CaptureItem> {
         image_height: row.get(12)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+        deleted_at: row.get(13)?,
     })
 }
 
@@ -712,6 +969,7 @@ mod tests {
                     .contains(&name.as_str()))
         );
         drop(connection);
+        // Reopening retries the failed migration and continues to the latest.
         let database = Database::open(&path).unwrap();
         assert_eq!(
             database
@@ -719,7 +977,7 @@ mod tests {
                 .unwrap()
                 .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
                 .unwrap(),
-            5
+            6
         );
         assert!(database.integrity_check().unwrap());
     }
@@ -1004,7 +1262,7 @@ mod tests {
             .create_item("A caption", ItemKind::Note, None, None, None)
             .expect("create note");
         let error = database
-            .merge_items(&[image.id.clone(), note.id.clone()])
+            .merge_items(&[image.id.clone(), note.id.clone()], true)
             .expect_err("merging images must fail");
         assert!(matches!(error, DatabaseError::CannotMergeImages));
     }
@@ -1066,8 +1324,9 @@ mod tests {
             .all(|item| item.section_id.as_deref() == Some(section.id.as_str())));
 
         let merged = database
-            .merge_items(&[first.id.clone(), second.id.clone()])
-            .expect("merge captures");
+            .merge_items(&[first.id.clone(), second.id.clone()], false)
+            .expect("merge captures")
+            .0;
         assert_eq!(merged.kind, ItemKind::Note);
         assert_eq!(merged.content, "First thought\n\nSecond thought");
         assert_eq!(merged.section_id.as_deref(), Some(section.id.as_str()));
@@ -1137,5 +1396,221 @@ mod tests {
                 .expect("read shortcuts"),
             Some(r#"{"capture":"Alt+Space"}"#.to_string())
         );
+    }
+
+    #[test]
+    fn migration_006_adds_trash_column_and_indexes_without_touching_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("trash-migration.db");
+        let connection = Connection::open(&path).unwrap();
+        for migration in [
+            MIGRATION_001,
+            MIGRATION_002,
+            MIGRATION_003,
+            MIGRATION_004,
+            MIGRATION_005,
+        ] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection.execute("INSERT INTO captures (id, kind, content, status, created_at, updated_at) VALUES ('legacy', 'note', 'Keep', 'open', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')", []).unwrap();
+        drop(connection);
+        let database = Database::open(&path).unwrap();
+        let legacy = database.get_item("legacy").unwrap();
+        assert_eq!(legacy.content, "Keep");
+        assert_eq!(legacy.deleted_at, None);
+        let indexes: Vec<String> = database
+            .connection()
+            .unwrap()
+            .prepare("PRAGMA index_list(captures)")
+            .unwrap()
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(indexes.contains(&"idx_captures_created_at".to_string()));
+        assert!(indexes.contains(&"idx_captures_deleted_at".to_string()));
+        assert_eq!(
+            database
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+                .unwrap(),
+            6
+        );
+        assert!(database.integrity_check().unwrap());
+    }
+
+    #[test]
+    fn trash_restore_purge_and_empty_round_trip() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("trash.db")).unwrap();
+        let first = database.create_item("First", ItemKind::Note, None, None, None).unwrap();
+        let second = database.create_item("Second", ItemKind::Prompt, None, None, None).unwrap();
+        let third = database.create_item("Third", ItemKind::Note, None, None, None).unwrap();
+
+        let trashed = database
+            .trash_items(&[first.id.clone(), second.id.clone(), "missing".to_string()])
+            .unwrap();
+        assert_eq!(trashed.len(), 2, "missing ids are skipped");
+        assert!(trashed.iter().all(|item| item.deleted_at.is_some()));
+        assert_eq!(trashed[0].id, first.id, "rows come back in requested order");
+        assert!(trashed[0].updated_at > first.updated_at);
+        // Trashing twice is a no-op, not a timestamp refresh.
+        assert!(database.trash_items(std::slice::from_ref(&first.id)).unwrap().is_empty());
+        assert_eq!(database.list_items().unwrap().len(), 3, "trashed rows are still listed");
+        assert_eq!(database.list_trashed().unwrap().len(), 2);
+
+        let restored = database.restore_items(&[first.id.clone(), third.id.clone()]).unwrap();
+        assert_eq!(restored.len(), 1, "only trashed captures restore");
+        assert_eq!(restored[0].deleted_at, None);
+
+        let purged = database.purge_items(std::slice::from_ref(&second.id)).unwrap();
+        assert_eq!(purged[0].content, "Second");
+        assert!(matches!(database.get_item(&second.id), Err(DatabaseError::NotFound)));
+
+        database.trash_items(std::slice::from_ref(&third.id)).unwrap();
+        let emptied = database.empty_trash().unwrap();
+        assert_eq!(emptied.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), vec![third.id.as_str()]);
+        assert_eq!(database.list_items().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn expired_trash_is_purged_by_parsed_cutoff() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("expiry.db")).unwrap();
+        let old = database.create_item("Old", ItemKind::Note, None, None, None).unwrap();
+        let fresh = database.create_item("Fresh", ItemKind::Note, None, None, None).unwrap();
+        database.trash_items(&[old.id.clone(), fresh.id.clone()]).unwrap();
+        // Mixed spellings: nanosecond Zulu for the old row, offset form for the fresh one.
+        database
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE captures SET deleted_at = '2026-01-01T00:00:00.000000001Z' WHERE id = ?1",
+                [&old.id],
+            )
+            .unwrap();
+        let cutoff = Utc::now() - chrono::Duration::days(7);
+        let purged = database.purge_trashed_before(cutoff).unwrap();
+        assert_eq!(purged.len(), 1);
+        assert_eq!(purged[0].id, old.id);
+        assert!(database.get_item(&fresh.id).unwrap().deleted_at.is_some());
+    }
+
+    #[test]
+    fn bulk_status_is_one_transaction_and_section_moves_stay_atomic() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("bulk.db")).unwrap();
+        let a = database.create_item("A", ItemKind::Note, None, None, None).unwrap();
+        let b = database.create_item("B", ItemKind::Note, None, None, None).unwrap();
+        let done = database
+            .set_items_status(&[b.id.clone(), a.id.clone(), "gone".to_string()], ItemStatus::Done)
+            .unwrap();
+        assert_eq!(done.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), vec![b.id.as_str(), a.id.as_str()]);
+        assert!(done.iter().all(|item| item.status == ItemStatus::Done));
+
+        let section = database.create_section("Later").unwrap();
+        assert!(matches!(
+            database.move_items_to_section(&[a.id.clone(), "gone".to_string()], Some(&section.id)),
+            Err(DatabaseError::NotFound)
+        ));
+        assert_eq!(database.get_item(&a.id).unwrap().section_id, None, "failed batch rolled back");
+        let moved = database.move_items_to_section(&[a.id.clone(), b.id.clone()], Some(&section.id)).unwrap();
+        assert!(moved.iter().all(|item| item.section_id.as_deref() == Some(section.id.as_str())));
+        let unfiled = database.delete_section(&section.id).unwrap();
+        assert_eq!(unfiled.len(), 2);
+        assert!(unfiled.iter().all(|item| item.section_id.is_none() && item.updated_at > moved[0].updated_at));
+    }
+
+    #[test]
+    fn merge_trashes_or_purges_its_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("merge.db")).unwrap();
+        let a = database.create_item("A", ItemKind::Note, None, None, None).unwrap();
+        let b = database.create_item("B", ItemKind::Note, None, None, None).unwrap();
+        let (merged, sources) = database.merge_items(&[a.id.clone(), b.id.clone()], true).unwrap();
+        assert_eq!(merged.content, "A\n\nB");
+        assert_eq!(sources.len(), 2);
+        assert!(sources.iter().all(|item| item.deleted_at.is_some()));
+        assert_eq!(database.list_trashed().unwrap().len(), 2);
+
+        let c = database.create_item("C", ItemKind::Note, None, None, None).unwrap();
+        let (merged_again, purged) = database.merge_items(&[merged.id.clone(), c.id.clone()], false).unwrap();
+        assert_eq!(merged_again.content, "A\n\nB\n\nC");
+        assert_eq!(purged.len(), 2);
+        assert!(matches!(database.get_item(&c.id), Err(DatabaseError::NotFound)));
+        assert!(matches!(
+            database.merge_items(&[merged_again.id.clone(), "missing".to_string()], true),
+            Err(DatabaseError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn returning_rows_match_a_fresh_readback() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Database::open(&directory.path().join("returning.db")).unwrap();
+        let created = database.create_item("Row", ItemKind::Prompt, Some("Safari"), Some("com.apple.Safari"), None).unwrap();
+        assert_eq!(database.get_item(&created.id).unwrap(), created);
+        let toggled = database.toggle_item(&created.id).unwrap();
+        assert_eq!(database.get_item(&created.id).unwrap(), toggled);
+        assert_eq!(toggled.status, ItemStatus::Done);
+        let edited = database.update_item_if_current(&created.id, "Edited", ItemKind::Note, Some(&toggled.updated_at)).unwrap();
+        assert_eq!(database.get_item(&created.id).unwrap(), edited);
+        assert_eq!(database.get_items(&["nope".to_string(), created.id.clone()]).unwrap(), vec![edited]);
+        assert_eq!(database.list_attachment_paths().unwrap(), Vec::<String>::new());
+        database.checkpoint(false).unwrap();
+        database.checkpoint(true).unwrap();
+        database.optimize().unwrap();
+        assert_eq!(database.count_items().unwrap(), 1);
+    }
+
+    /// `cargo test --release -- --ignored --nocapture database_micro_bench`
+    #[test]
+    #[ignore]
+    fn database_micro_bench() {
+        use std::time::Instant;
+        fn percentile(samples: &mut [f64], fraction: f64) -> f64 {
+            samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            samples[((samples.len() - 1) as f64 * fraction).round() as usize]
+        }
+        for rows in [1_000usize, 10_000] {
+            let directory = tempfile::tempdir().unwrap();
+            let database = Database::open(&directory.path().join("bench.db")).unwrap();
+            let mut creates = Vec::new();
+            let mut ids = Vec::new();
+            for index in 0..rows {
+                let started = Instant::now();
+                let item = database
+                    .create_item(&format!("Capture {index} with some Markdown **body** text"), ItemKind::Note, None, None, None)
+                    .unwrap();
+                creates.push(started.elapsed().as_secs_f64() * 1000.0);
+                ids.push(item.id);
+            }
+            let mut lists = Vec::new();
+            for _ in 0..20 {
+                let started = Instant::now();
+                let _ = database.list_items().unwrap();
+                lists.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+            let mut toggles = Vec::new();
+            for id in ids.iter().take(200) {
+                let started = Instant::now();
+                database.toggle_item(id).unwrap();
+                toggles.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+            let batch: Vec<String> = ids.iter().take(100).cloned().collect();
+            let started = Instant::now();
+            database.trash_items(&batch).unwrap();
+            let trash_100 = started.elapsed().as_secs_f64() * 1000.0;
+            let started = Instant::now();
+            database.purge_items(&batch).unwrap();
+            let purge_100 = started.elapsed().as_secs_f64() * 1000.0;
+            println!(
+                "rows={rows} create p50={:.3}ms p95={:.3}ms | list p50={:.2}ms p95={:.2}ms | toggle p50={:.3}ms p95={:.3}ms | trash100={trash_100:.2}ms purge100={purge_100:.2}ms",
+                percentile(&mut creates, 0.5), percentile(&mut creates, 0.95),
+                percentile(&mut lists, 0.5), percentile(&mut lists, 0.95),
+                percentile(&mut toggles, 0.5), percentile(&mut toggles, 0.95),
+            );
+        }
     }
 }

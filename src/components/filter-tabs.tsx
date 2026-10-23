@@ -3,6 +3,7 @@ import {
   FileText,
   Inbox,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import type { QueueFilter } from "../types";
 
@@ -39,7 +40,20 @@ export function FilterTabs({
           <small>{counts[value]}</small>
         </button>
       ))}
+      {/* Trash sits apart from the live filters: icon only, count on hover/active. */}
+      <button
+        type="button"
+        className="filter-trash"
+        data-active={active === "trash"}
+        data-empty={counts.trash === 0}
+        onClick={() => onChange("trash")}
+        aria-current={active === "trash" ? "page" : undefined}
+        aria-label={`Trash, ${counts.trash} capture${counts.trash === 1 ? "" : "s"}`}
+        title="Trash"
+      >
+        <Trash2 size={15} strokeWidth={1.8} />
+        <small>{counts.trash}</small>
+      </button>
     </nav>
   );
 }
-

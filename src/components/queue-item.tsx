@@ -4,10 +4,11 @@ import {
   Globe2,
   Image as ImageIcon,
   Pencil,
+  RotateCcw,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useMemo, type MouseEvent } from "react";
+import { memo, useMemo, type MouseEvent } from "react";
 import type { CaptureItem } from "../types";
 import { attachmentUrl } from "../lib/api";
 import { formatCaptureTime, markdownExcerpt } from "../lib/items";
@@ -17,6 +18,8 @@ import { Button } from "./ui/button";
 import { CopyActionButton } from "./copy-action-button";
 import { QueueStateControl } from "./queue-state-control";
 
+/// Handlers take the capture id so the parent can pass stable references;
+/// the row is memoized and re-renders only when its own props change.
 type QueueItemProps = {
   item: CaptureItem;
   selected: boolean;
@@ -24,16 +27,18 @@ type QueueItemProps = {
   selectionMode: boolean;
   sectionName?: string;
   thumbnailFailed?: boolean;
-  onSelect: (event: MouseEvent<HTMLElement>) => void;
-  onContextMenu: (event: MouseEvent<HTMLElement>) => void;
-  onToggle: () => void;
-  onSelectionControl: (event: MouseEvent<HTMLButtonElement>) => void;
-  onEdit: () => void;
-  onPreview: () => void;
-  onDelete: () => void;
-  onCopy: () => Promise<void>;
-  onPaste: () => void;
   pasteShortcut: string;
+  onSelect: (id: string, event: MouseEvent<HTMLElement>) => void;
+  onContextMenu: (id: string, event: MouseEvent<HTMLElement>) => void;
+  onToggle: (id: string) => void;
+  onSelectionControl: (id: string) => void;
+  onEdit: (id: string) => void;
+  onPreview: (id: string) => void;
+  onDelete: (id: string) => void;
+  onCopy: (id: string) => Promise<void>;
+  onPaste: (id: string) => void;
+  onRestore: (id: string) => void;
+  onPurge: (id: string) => void;
 };
 
 function SourceIcon({ item }: { item: CaptureItem }) {
@@ -55,13 +60,14 @@ function SourceIcon({ item }: { item: CaptureItem }) {
   return <FileText size={12} strokeWidth={1.8} />;
 }
 
-export function QueueItem({
+export const QueueItem = memo(function QueueItem({
   item,
   selected,
   multiSelected,
   selectionMode,
   sectionName,
   thumbnailFailed = false,
+  pasteShortcut,
   onSelect,
   onContextMenu,
   onToggle,
@@ -71,10 +77,13 @@ export function QueueItem({
   onDelete,
   onCopy,
   onPaste,
-  pasteShortcut,
+  onRestore,
+  onPurge,
 }: QueueItemProps) {
   const done = item.status === "done";
+  const trashed = item.deletedAt !== null;
   const excerpt = useMemo(() => markdownExcerpt(item.content), [item.content]);
+  const id = item.id;
 
   return (
     <article
@@ -82,14 +91,15 @@ export function QueueItem({
       data-selected={selected}
       data-multi-selected={multiSelected}
       data-done={done}
+      data-trashed={trashed}
       data-selection-mode={selectionMode}
-      onClick={onSelect}
+      onClick={(event) => onSelect(id, event)}
       onMouseDown={(event) => {
         if (selectionMode || event.shiftKey) event.preventDefault();
       }}
-      onContextMenu={onContextMenu}
+      onContextMenu={(event) => onContextMenu(id, event)}
       onDoubleClick={(event) => {
-        if (!selectionMode && !event.shiftKey && !(event.target as HTMLElement).closest("button, a")) onPreview();
+        if (!selectionMode && !event.shiftKey && !(event.target as HTMLElement).closest("button, a")) onPreview(id);
       }}
       role="option"
       aria-selected={multiSelected}
@@ -98,8 +108,8 @@ export function QueueItem({
         done={done}
         selected={multiSelected}
         selectionMode={selectionMode}
-        onToggleDone={onToggle}
-        onSelect={onSelectionControl}
+        onToggleDone={() => { if (!trashed) onToggle(id); }}
+        onSelect={() => onSelectionControl(id)}
       />
 
       <div className="item-copy">
@@ -133,6 +143,12 @@ export function QueueItem({
               <span>{sectionName}</span>
             </>
           ) : null}
+          {trashed ? (
+            <>
+              <i />
+              <span>Deleted {formatCaptureTime(item.deletedAt!)}</span>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -140,17 +156,42 @@ export function QueueItem({
         {formatCaptureTime(item.createdAt)}
       </time>
 
-      {selected ? (
+      {selected && trashed ? (
         <div
           className="row-actions"
           onClick={(event) => event.stopPropagation()}
         >
-          <CopyActionButton kind={item.kind} onCopy={onCopy} />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="danger-action"
+            aria-label="Delete permanently"
+            title="Delete now"
+            onClick={() => onPurge(id)}
+          >
+            <Trash2 size={13} />
+          </Button>
+          <Button
+            variant="accent"
+            size="sm"
+            className="restore-button"
+            onClick={() => onRestore(id)}
+          >
+            <RotateCcw size={12} />
+            Restore
+          </Button>
+        </div>
+      ) : selected ? (
+        <div
+          className="row-actions"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <CopyActionButton kind={item.kind} onCopy={() => onCopy(id)} />
           <Button
             variant="ghost"
             size="icon"
             aria-label="Edit capture"
-            onClick={onEdit}
+            onClick={() => onEdit(id)}
           >
             <Pencil size={13} />
           </Button>
@@ -159,7 +200,8 @@ export function QueueItem({
             size="icon"
             className="danger-action"
             aria-label="Delete capture"
-            onClick={onDelete}
+            title="Move to Trash"
+            onClick={() => onDelete(id)}
           >
             <Trash2 size={13} />
           </Button>
@@ -167,7 +209,7 @@ export function QueueItem({
             variant="accent"
             size="sm"
             className="paste-button"
-            onClick={onPaste}
+            onClick={() => onPaste(id)}
           >
             {item.kind === "image" ? "Paste Image" : "Paste formatted"}
             <kbd>{shortcutLabel(pasteShortcut)}</kbd>
@@ -176,4 +218,4 @@ export function QueueItem({
       ) : null}
     </article>
   );
-}
+});

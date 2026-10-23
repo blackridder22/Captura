@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { CaptureItem } from "../types";
 import {
   applySectionFilter,
+  captureTitle,
   countItems,
   filterItems,
   inferKind,
+  matchesQueueFilter,
 } from "./items";
 
 const items: CaptureItem[] = [
@@ -16,7 +18,7 @@ const items: CaptureItem[] = [
   sourceApp: "ChatGPT",
   sourceBundleId: "com.openai.chat",
   sectionId: null,
-  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: "2026-07-29T12:00:00Z",
     updatedAt: "2026-07-29T12:00:00Z",
   },
@@ -28,7 +30,7 @@ const items: CaptureItem[] = [
   sourceApp: null,
   sourceBundleId: null,
   sectionId: null,
-  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null,
+  attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null,
     createdAt: "2026-07-29T12:00:00Z",
     updatedAt: "2026-07-29T12:00:00Z",
   },
@@ -49,6 +51,32 @@ describe("filterItems", () => {
     expect(filterItems(items, "prompts", "chatgpt")[0]?.id).toBe(
       "prompt",
     );
+  });
+});
+
+describe("trash filtering", () => {
+  const trashed: CaptureItem = { ...items[0]!, id: "trashed", deletedAt: "2026-07-30T12:00:00Z" };
+  const all = [...items, trashed];
+
+  it("keeps trashed captures out of every live filter and shows only them in Trash", () => {
+    expect(filterItems(all, "inbox", "").map((item) => item.id)).toEqual(["prompt"]);
+    expect(filterItems(all, "prompts", "").map((item) => item.id)).toEqual(["prompt"]);
+    expect(filterItems(all, "trash", "").map((item) => item.id)).toEqual(["trashed"]);
+    expect(filterItems(all, "trash", "sharper").map((item) => item.id)).toEqual(["trashed"]);
+    expect(matchesQueueFilter(trashed, "done")).toBe(false);
+    expect(matchesQueueFilter(items[1]!, "trash")).toBe(false);
+  });
+
+  it("counts trash separately from live captures", () => {
+    expect(countItems(all)).toEqual({ inbox: 1, prompts: 1, notes: 0, done: 1, trash: 1 });
+  });
+});
+
+describe("captureTitle", () => {
+  it("uses the first non-empty line without Markdown markers", () => {
+    expect(captureTitle("\n\n## Release **plan**\n\nbody")).toBe("Release plan");
+    expect(captureTitle("- [ ] buy milk")).toBe("buy milk");
+    expect(captureTitle("   ")).toBe("Untitled capture");
   });
 });
 
@@ -78,6 +106,7 @@ describe("countItems", () => {
       prompts: 1,
       notes: 0,
       done: 1,
+      trash: 0,
     });
   });
 });

@@ -3,21 +3,26 @@ import {
   Check,
   Clipboard,
   DownloadCloud,
+  FileCode2,
   Keyboard,
   LockKeyhole,
   LogOut,
   Pin,
   RotateCcw,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
 import type { UpdateStatus } from "../hooks/use-updater";
 import type {
   AppSettings,
+  CaptureView,
   PermissionStatus,
   ShortcutAction,
+  TrashRetention,
 } from "../types";
 import { shortcutActions, shortcutLabel } from "../lib/shortcuts";
+import { trashRetentionLabel } from "../lib/items";
 import { ShortcutRecorder } from "./shortcut-recorder";
 import { Button } from "./ui/button";
 
@@ -32,12 +37,27 @@ type SettingsSheetProps = {
   ) => Promise<void>;
   onResetShortcuts: () => Promise<void>;
   onKeepOpenChange: (keepOpen: boolean) => Promise<void>;
+  trashCount: number;
+  onTrashRetentionChange: (retention: TrashRetention) => Promise<void>;
+  onDefaultCaptureViewChange: (view: CaptureView) => Promise<void>;
+  onEmptyTrash: () => Promise<void>;
   onCaptureClipboard: () => Promise<void>;
   onQuit: () => Promise<void>;
   updateStatus: UpdateStatus;
   onCheckUpdates: () => Promise<void>;
   onInstallUpdate: () => Promise<void>;
 };
+
+const retentionOptions: { value: TrashRetention; label: string }[] = [
+  { value: "immediate", label: "Now" },
+  { value: "7d", label: "7 days" },
+  { value: "28d", label: "28 days" },
+];
+
+const viewOptions: { value: CaptureView; label: string }[] = [
+  { value: "page", label: "Page" },
+  { value: "source", label: "Source" },
+];
 
 function updateStatusLine(status: UpdateStatus) {
   switch (status.phase) {
@@ -64,6 +84,10 @@ export function SettingsSheet({
   onShortcutChange,
   onResetShortcuts,
   onKeepOpenChange,
+  trashCount,
+  onTrashRetentionChange,
+  onDefaultCaptureViewChange,
+  onEmptyTrash,
   onCaptureClipboard,
   onQuit,
   updateStatus,
@@ -170,6 +194,79 @@ export function SettingsSheet({
             >
               Capture
             </Button>
+          </div>
+
+          <div className="settings-group-title">
+            <span>Trash</span>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-icon">
+              <Trash2 size={16} />
+            </span>
+            <div>
+              <strong>Auto-delete</strong>
+              <p>{trashRetentionLabel[settings.trashRetention]}</p>
+            </div>
+            <div className="settings-segmented" role="radiogroup" aria-label="Trash auto-delete">
+              {retentionOptions.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.trashRetention === value}
+                  data-active={settings.trashRetention === value}
+                  onClick={() => void onTrashRetentionChange(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-icon">
+              <Trash2 size={16} />
+            </span>
+            <div>
+              <strong>Empty Trash</strong>
+              <p>{trashCount ? `${trashCount} capture${trashCount === 1 ? "" : "s"} waiting to be deleted.` : "Nothing in Trash."}</p>
+            </div>
+            <Button variant="surface" size="sm" disabled={!trashCount} onClick={() => void onEmptyTrash()}>
+              Empty
+            </Button>
+          </div>
+
+          <div className="settings-group-title">
+            <span>Editor</span>
+          </div>
+
+          <div className="settings-row">
+            <span className="settings-icon">
+              <FileCode2 size={16} />
+            </span>
+            <div>
+              <strong>Open captures as</strong>
+              <p>Page edits like a document; Source shows the Markdown.</p>
+            </div>
+            <div className="settings-segmented" role="radiogroup" aria-label="Default capture view">
+              {viewOptions.map(({ value, label }) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  aria-checked={settings.defaultCaptureView === value}
+                  data-active={settings.defaultCaptureView === value}
+                  onClick={() => void onDefaultCaptureViewChange(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="settings-group-title">
+            <span>Permissions and updates</span>
           </div>
 
           <div className="settings-row">

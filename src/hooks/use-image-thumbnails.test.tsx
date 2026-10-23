@@ -7,7 +7,7 @@ import { useImageThumbnails } from "./use-image-thumbnails";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 vi.mock("../lib/api", () => ({ isTauriRuntime: () => true, ensureImageThumbnail: vi.fn() }));
-const original: CaptureItem = { id: "legacy", kind: "image", content: "Legacy image", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: "/original.png", thumbnailPath: null, imageWidth: null, imageHeight: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00Z" };
+const original: CaptureItem = { id: "legacy", kind: "image", content: "Legacy image", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: "/original.png", thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00Z" };
 const ready = vi.fn();
 let intersection: IntersectionObserverCallback;
 class Observer {

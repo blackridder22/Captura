@@ -13,7 +13,7 @@ vi.mock("../lib/api", () => ({
   onImageImportCompleted: vi.fn(async (handler) => { completed = handler; return vi.fn(); }),
   onCaptureError: vi.fn(async (handler) => { captureError = handler; return vi.fn(); }),
 }));
-const image: CaptureItem = { id: "image", kind: "image", content: "Photo", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: "/full.png", thumbnailPath: "/thumb.png", imageWidth: 1000, imageHeight: 750, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00Z" };
+const image: CaptureItem = { id: "image", kind: "image", content: "Photo", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: "/full.png", thumbnailPath: "/thumb.png", imageWidth: 1000, imageHeight: 750, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00Z", deletedAt: null };
 const batch = (requestId: string, overrides: Partial<ImageImportResult> = {}): ImageImportResult => ({ requestId, cancelled: false, items: [image], issues: [], warnings: [], ...overrides });
 const notify = vi.fn();
 const success = vi.fn();

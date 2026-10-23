@@ -1,11 +1,13 @@
 import {
   CheckCircle2,
+  CheckSquare,
   ClipboardCopy,
   Copy,
   FilePenLine,
   FolderInput,
   Maximize2,
   Merge,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import type {
@@ -23,6 +25,7 @@ type QueueContextMenuProps = {
   items: CaptureItem[];
   sections: Section[];
   shortcuts: KeyboardShortcutSettings;
+  inTrash: boolean;
   onCopy: () => void;
   onCopyAsList: () => void;
   onPaste: () => void;
@@ -32,6 +35,9 @@ type QueueContextMenuProps = {
   onMerge: () => void;
   onMove: (sectionId: string | null) => void;
   onDelete: () => void;
+  onRestore: () => void;
+  onPurge: () => void;
+  onSelectAll: () => void;
 };
 
 export function QueueContextMenu({
@@ -40,6 +46,7 @@ export function QueueContextMenu({
   items,
   sections,
   shortcuts,
+  inTrash,
   onCopy,
   onCopyAsList,
   onPaste,
@@ -49,15 +56,59 @@ export function QueueContextMenu({
   onMerge,
   onMove,
   onDelete,
+  onRestore,
+  onPurge,
+  onSelectAll,
 }: QueueContextMenuProps) {
   const count = items.length;
-  const { ref, position } = useMenuPosition(x, y, items.length, 136);
+  const { ref, position } = useMenuPosition(x, y, `${items.length}:${inTrash}`, 136);
   useMenuFocus(ref);
   const single = count === 1 ? items[0] : null;
   const allText = items.every((item) => item.kind !== "image");
   const markdownUnavailable = allText
     ? undefined
     : "Markdown actions are unavailable when the selection includes an image.";
+
+  if (inTrash) {
+    return (
+      <div
+        className="queue-context-menu"
+        ref={ref}
+        style={position}
+        role="menu"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button role="menuitem" onClick={onRestore}>
+          <RotateCcw size={14} />
+          Restore
+        </button>
+        <button role="menuitem" onClick={onExpand}>
+          <Maximize2 size={14} />
+          Open
+        </button>
+        <button
+          role="menuitem"
+          onClick={onCopy}
+          disabled={!allText && single?.kind !== "image"}
+        >
+          <Copy size={14} />
+          {single?.kind === "image" ? "Copy Image" : "Copy as Markdown"}
+          <Kbd>{shortcutLabel(shortcuts.copy)}</Kbd>
+        </button>
+        <button role="menuitem" onClick={onSelectAll}>
+          <CheckSquare size={14} />
+          Select All
+          <Kbd>{shortcutLabel(shortcuts.selectAll)}</Kbd>
+        </button>
+        <i />
+        <button className="context-danger" role="menuitem" onClick={onPurge}>
+          <Trash2 size={14} />
+          Delete Now
+          <Kbd>{shortcutLabel(shortcuts.delete)}</Kbd>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -112,7 +163,7 @@ export function QueueContextMenu({
       </button>
       <button role="menuitem" onClick={onExpand}>
         <Maximize2 size={14} />
-        Preview
+        Open
       </button>
       <button role="menuitem" onClick={onEdit} disabled={count !== 1}>
         <FilePenLine size={14} />
@@ -138,10 +189,15 @@ export function QueueContextMenu({
           ))}
         </div>
       </div>
+      <button role="menuitem" onClick={onSelectAll}>
+        <CheckSquare size={14} />
+        Select All
+        <Kbd>{shortcutLabel(shortcuts.selectAll)}</Kbd>
+      </button>
       <i />
       <button className="context-danger" role="menuitem" onClick={onDelete}>
         <Trash2 size={14} />
-        Delete
+        Move to Trash
         <Kbd>{shortcutLabel(shortcuts.delete)}</Kbd>
       </button>
     </div>

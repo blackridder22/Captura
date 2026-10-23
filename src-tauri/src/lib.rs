@@ -19,10 +19,11 @@ use std::{
     time::Duration,
 };
 
+use chrono::Utc;
 use database::{CaptureItem, Database, DatabaseError, ItemKind, ItemStatus, Section};
 use directories::{BaseDirs, ProjectDirs};
 use serde::{Deserialize, Serialize};
-use storage::ProtectedStorage;
+use storage::{BackupScheduler, ProtectedStorage};
 use tauri::{
     image::Image,
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -38,6 +39,13 @@ const GLOBAL_SHORTCUT: &str = "Alt+Space";
 const SHORTCUTS_SETTING: &str = "keyboard_shortcuts";
 const KEEP_OPEN_SETTING: &str = "keep_open";
 const ACCESSIBILITY_SETUP_SEEN_SETTING: &str = "accessibility_setup_seen";
+const TRASH_RETENTION_SETTING: &str = "trash_retention";
+const CAPTURE_VIEW_SETTING: &str = "default_capture_view";
+/// Debounce for coalescing a burst of writes into one backup, and the longest
+/// a backup may be postponed while writes keep arriving.
+const BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
+const BACKUP_MAX_WAIT: Duration = Duration::from_secs(6);
+const TRASH_PURGE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -58,6 +66,7 @@ struct KeyboardShortcuts {
     edit: String,
     merge: String,
     delete: String,
+    select_all: String,
 }
 
 impl Default for KeyboardShortcuts {
@@ -84,6 +93,7 @@ impl Default for KeyboardShortcuts {
             edit: "Enter".to_string(),
             merge: "Shift+Command+M".to_string(),
             delete: "Command+Backspace".to_string(),
+            select_all: "Command+A".to_string(),
         }
     }
 }
@@ -107,6 +117,7 @@ impl KeyboardShortcuts {
             "edit" => Some(&self.edit),
             "merge" => Some(&self.merge),
             "delete" => Some(&self.delete),
+            "selectAll" => Some(&self.select_all),
             _ => None,
         }
     }
@@ -129,10 +140,73 @@ impl KeyboardShortcuts {
             "edit" => &mut self.edit,
             "merge" => &mut self.merge,
             "delete" => &mut self.delete,
+            "selectAll" => &mut self.select_all,
             _ => return Err("Unknown shortcut action".to_string()),
         };
         *target = shortcut;
         Ok(())
+    }
+}
+
+/// How long trashed captures stay restorable. `Immediate` skips Trash.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+enum TrashRetention {
+    #[serde(rename = "immediate")]
+    Immediate,
+    #[serde(rename = "7d")]
+    SevenDays,
+    #[serde(rename = "28d")]
+    TwentyEightDays,
+}
+
+impl TrashRetention {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::SevenDays => "7d",
+            Self::TwentyEightDays => "28d",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "immediate" => Some(Self::Immediate),
+            "7d" => Some(Self::SevenDays),
+            "28d" => Some(Self::TwentyEightDays),
+            _ => None,
+        }
+    }
+
+    fn max_age(self) -> chrono::Duration {
+        match self {
+            Self::Immediate => chrono::Duration::zero(),
+            Self::SevenDays => chrono::Duration::days(7),
+            Self::TwentyEightDays => chrono::Duration::days(28),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum CaptureView {
+    Page,
+    Source,
+}
+
+impl CaptureView {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Source => "source",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "page" => Some(Self::Page),
+            "source" => Some(Self::Source),
+            _ => None,
+        }
     }
 }
 
@@ -141,11 +215,23 @@ impl KeyboardShortcuts {
 struct AppSettings {
     shortcuts: KeyboardShortcuts,
     keep_open: bool,
+    trash_retention: TrashRetention,
+    default_capture_view: CaptureView,
+}
+
+/// Result of a delete: with Trash enabled the rows are returned as upserts
+/// (`deleted_at` set); with Immediate retention they are gone.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteResult {
+    trashed: Vec<CaptureItem>,
+    purged_ids: Vec<String>,
 }
 
 struct AppState {
     database: Database,
     storage: ProtectedStorage,
+    backups: BackupScheduler,
     storage_warning: Mutex<Option<String>>,
     image_imports: image_import::ImageImportService,
     image_cleanup_started: AtomicBool,
@@ -158,6 +244,8 @@ struct AppState {
     main_window_has_focused: AtomicBool,
     keep_open: AtomicBool,
     accessibility_setup_seen: AtomicBool,
+    trash_retention: Mutex<TrashRetention>,
+    default_capture_view: Mutex<CaptureView>,
 }
 
 impl AppState {
@@ -191,17 +279,25 @@ impl AppState {
             .map_err(|error| error.to_string())?
             .is_some_and(|value| value == "true");
         let accessibility_setup_seen = load_accessibility_setup_seen(&database, database_existed)?;
-        let storage_warning = if storage.blocked() {
-            Some(storage.issue_message())
-        } else {
-            storage
-                .snapshot(&database)
-                .err()
-                .map(|error| format!("Local backup failed: {error}"))
-        };
+        let trash_retention = database
+            .setting(TRASH_RETENTION_SETTING)
+            .map_err(|error| error.to_string())?
+            .as_deref()
+            .and_then(TrashRetention::parse)
+            .unwrap_or(TrashRetention::SevenDays);
+        let default_capture_view = database
+            .setting(CAPTURE_VIEW_SETTING)
+            .map_err(|error| error.to_string())?
+            .as_deref()
+            .and_then(CaptureView::parse)
+            .unwrap_or(CaptureView::Page);
+        // The launch backup runs on the backup thread once the app is up; it
+        // used to block here, before any window existed.
+        let storage_warning = storage.blocked().then(|| storage.issue_message());
         Ok(Self {
             database,
             storage,
+            backups: BackupScheduler::default(),
             storage_warning: Mutex::new(storage_warning),
             image_imports: image_import::ImageImportService::default(),
             image_cleanup_started: AtomicBool::new(false),
@@ -214,7 +310,16 @@ impl AppState {
             main_window_has_focused: AtomicBool::new(false),
             keep_open: AtomicBool::new(keep_open),
             accessibility_setup_seen: AtomicBool::new(accessibility_setup_seen),
+            trash_retention: Mutex::new(trash_retention),
+            default_capture_view: Mutex::new(default_capture_view),
         })
+    }
+
+    fn trash_retention(&self) -> TrashRetention {
+        self.trash_retention
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(TrashRetention::SevenDays)
     }
 }
 
@@ -250,8 +355,14 @@ fn mutate_items<T>(
         .changes
         .lock()
         .map_err(|_| "Capture state unavailable")?;
+    state.backups.begin_write();
+    state.storage.mark_dirty();
     let (result, upserts, deleted_ids) = action(&state.database)?;
-    snapshot_storage(state, Some(app), "Capture saved");
+    state
+        .storage
+        .record_database_write(state.database.count_items().ok());
+    // The backup runs on its own thread; the reply and the event go out now.
+    state.backups.commit_write();
     *revision += 1;
     let _ = app.emit(
         "captura://captures-changed",
@@ -264,19 +375,150 @@ fn mutate_items<T>(
     Ok(result)
 }
 
-fn snapshot_storage(state: &AppState, app: Option<&AppHandle>, completed: &str) {
-    state.storage.record_database_write();
-    let warning = state
-        .storage
-        .snapshot(&state.database)
-        .err()
-        .map(|error| format!("{completed}, but local backup failed: {error}"));
-    if let Ok(mut current) = state.storage_warning.lock() {
-        *current = warning.clone();
+/// Settings writes share the write path's bookkeeping without a revision.
+fn persist_setting(state: &AppState, key: &str, value: &str) -> Result<(), String> {
+    if state.storage.blocked() {
+        return Err(state.storage.issue_message());
     }
-    if let (Some(app), Some(warning)) = (app, warning) {
-        report_capture_error(app, warning);
+    state.storage.mark_dirty();
+    state
+        .database
+        .set_setting(key, value)
+        .map_err(|error| error.to_string())?;
+    state.backups.request();
+    Ok(())
+}
+
+/// Backup worker: one thread, debounced, never on the write path. Runs the
+/// launch backup too, after the app is up instead of before any window exists.
+fn start_backup_worker(app: AppHandle) {
+    thread::spawn(move || {
+        let state = app.state::<AppState>();
+        if state.storage.needs_startup_backup() {
+            state.backups.request();
+        }
+        while let Some(generation) = state.backups.next_job(BACKUP_DEBOUNCE, BACKUP_MAX_WAIT) {
+            let result = state.storage.snapshot(&state.database);
+            let warning = result
+                .as_ref()
+                .err()
+                .map(|error| format!("Local backup failed: {error}"));
+            if let Ok(mut current) = state.storage_warning.lock() {
+                *current = warning.clone();
+            }
+            if let Some(warning) = warning {
+                let _ = app.emit("captura://capture-error", warning);
+            }
+            let caught_up = state.backups.finish_job(generation);
+            if caught_up && result.is_ok() {
+                state.storage.backup_caught_up();
+            }
+            // Keep the WAL from growing between launches; cheap when idle.
+            let _ = state.database.checkpoint(false);
+        }
+    });
+}
+
+fn flush_backups_for_exit(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.backups.flush(Duration::from_secs(5));
+    state.backups.shutdown();
+    let _ = state.database.checkpoint(true);
+    let _ = state.database.optimize();
+}
+
+fn remove_capture_files(items: &[CaptureItem]) {
+    for item in items {
+        for path in [&item.attachment_path, &item.thumbnail_path]
+            .into_iter()
+            .flatten()
+        {
+            let _ = std::fs::remove_file(path);
+        }
     }
+}
+
+/// Trash or purge, depending on the retention setting.
+fn delete_captures(
+    app: &AppHandle,
+    state: &AppState,
+    ids: Vec<String>,
+) -> Result<DeleteResult, String> {
+    let immediate = state.trash_retention() == TrashRetention::Immediate;
+    mutate_items(app, state, |database| {
+        if immediate {
+            let purged = database
+                .purge_items(&ids)
+                .map_err(|error| error.to_string())?;
+            remove_capture_files(&purged);
+            let purged_ids: Vec<String> = purged.into_iter().map(|item| item.id).collect();
+            Ok((
+                DeleteResult {
+                    trashed: vec![],
+                    purged_ids: purged_ids.clone(),
+                },
+                vec![],
+                purged_ids,
+            ))
+        } else {
+            let trashed = database
+                .trash_items(&ids)
+                .map_err(|error| error.to_string())?;
+            Ok((
+                DeleteResult {
+                    trashed: trashed.clone(),
+                    purged_ids: vec![],
+                },
+                trashed,
+                vec![],
+            ))
+        }
+    })
+}
+
+fn purge_captures(app: &AppHandle, state: &AppState, ids: Vec<String>) -> Result<Vec<String>, String> {
+    mutate_items(app, state, |database| {
+        let purged = database
+            .purge_items(&ids)
+            .map_err(|error| error.to_string())?;
+        remove_capture_files(&purged);
+        let purged_ids: Vec<String> = purged.into_iter().map(|item| item.id).collect();
+        Ok((purged_ids.clone(), vec![], purged_ids))
+    })
+}
+
+/// Purges trash older than the retention window. Emits nothing when the
+/// trash holds nothing expired.
+fn purge_expired_trash_now(app: &AppHandle) -> Result<Vec<String>, String> {
+    let state = app.state::<AppState>();
+    if state.storage.blocked() {
+        return Ok(vec![]);
+    }
+    let cutoff = Utc::now() - state.trash_retention().max_age();
+    let expired: Vec<String> = state
+        .database
+        .list_trashed()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|item| {
+            item.deleted_at
+                .as_deref()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .is_some_and(|deleted| deleted.with_timezone(&Utc) < cutoff)
+        })
+        .map(|item| item.id)
+        .collect();
+    if expired.is_empty() {
+        return Ok(vec![]);
+    }
+    mutate_items(app, &state, |database| {
+        let purged = database
+            .purge_trashed_before(cutoff)
+            .map_err(|error| error.to_string())?;
+        remove_capture_files(&purged);
+        let purged_ids: Vec<String> = purged.into_iter().map(|item| item.id).collect();
+        Ok((purged_ids.clone(), vec![], purged_ids))
+    })
 }
 
 fn mutate_one(
@@ -571,59 +813,123 @@ fn list_items(state: State<'_, AppState>) -> Result<Vec<CaptureItem>, String> {
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
-fn create_item(
+/// Item writes run off the main thread (the IPC handler's thread on macOS).
+async fn blocking<T: Send + 'static>(
     app: AppHandle,
-    state: State<'_, AppState>,
+    work: impl FnOnce(&AppHandle, &AppState) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        work(&app, &state)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn create_item(
+    app: AppHandle,
     content: String,
     kind: ItemKind,
     source_app: Option<String>,
 ) -> Result<CaptureItem, String> {
-    mutate_one(&app, &state, |database| {
-        database.create_item(&content, kind, source_app.as_deref(), None, None)
+    blocking(app, move |app, state| {
+        mutate_one(app, state, |database| {
+            database.create_item(&content, kind, source_app.as_deref(), None, None)
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn update_item(
+async fn update_item(
     app: AppHandle,
-    state: State<'_, AppState>,
     id: String,
     content: String,
     kind: ItemKind,
     expected_updated_at: Option<String>,
 ) -> Result<CaptureItem, String> {
-    mutate_one(&app, &state, |database| {
-        database.update_item_if_current(&id, &content, kind, expected_updated_at.as_deref())
+    blocking(app, move |app, state| {
+        mutate_one(app, state, |database| {
+            database.update_item_if_current(&id, &content, kind, expected_updated_at.as_deref())
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn toggle_item(
+async fn toggle_item(app: AppHandle, id: String) -> Result<CaptureItem, String> {
+    blocking(app, move |app, state| {
+        mutate_one(app, state, |database| database.toggle_item(&id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_items_status(
     app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<CaptureItem, String> {
-    mutate_one(&app, &state, |database| database.toggle_item(&id))
+    ids: Vec<String>,
+    status: ItemStatus,
+) -> Result<Vec<CaptureItem>, String> {
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let items = database
+                .set_items_status(&ids, status)
+                .map_err(|error| error.to_string())?;
+            Ok((items.clone(), items, vec![]))
+        })
+    })
+    .await
 }
 
 #[tauri::command]
-fn delete_item(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    mutate_items(&app, &state, |database| {
-        let paths = database
-            .get_item(&id)
-            .ok()
-            .map(|item| [item.attachment_path, item.thumbnail_path]);
-        database
-            .delete_item(&id)
-            .map_err(|error| error.to_string())?;
-        if let Some(paths) = paths {
-            for path in paths.into_iter().flatten() {
-                let _ = std::fs::remove_file(path);
-            }
-        }
-        Ok(((), vec![], vec![id]))
+async fn delete_item(app: AppHandle, id: String) -> Result<DeleteResult, String> {
+    blocking(app, move |app, state| delete_captures(app, state, vec![id])).await
+}
+
+#[tauri::command]
+async fn delete_items(app: AppHandle, ids: Vec<String>) -> Result<DeleteResult, String> {
+    blocking(app, move |app, state| delete_captures(app, state, ids)).await
+}
+
+#[tauri::command]
+async fn restore_items(app: AppHandle, ids: Vec<String>) -> Result<Vec<CaptureItem>, String> {
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let items = database
+                .restore_items(&ids)
+                .map_err(|error| error.to_string())?;
+            Ok((items.clone(), items, vec![]))
+        })
     })
+    .await
+}
+
+#[tauri::command]
+async fn purge_items(app: AppHandle, ids: Vec<String>) -> Result<Vec<String>, String> {
+    blocking(app, move |app, state| purge_captures(app, state, ids)).await
+}
+
+#[tauri::command]
+async fn empty_trash(app: AppHandle) -> Result<Vec<String>, String> {
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let purged = database
+                .empty_trash()
+                .map_err(|error| error.to_string())?;
+            remove_capture_files(&purged);
+            let purged_ids: Vec<String> = purged.into_iter().map(|item| item.id).collect();
+            Ok((purged_ids.clone(), vec![], purged_ids))
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn purge_expired_trash(app: AppHandle) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || purge_expired_trash_now(&app))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -632,11 +938,13 @@ fn copy_items(
     ids: Vec<String>,
     mode: CopyMode,
 ) -> Result<CopyResult, String> {
-    let items = ids
-        .iter()
-        .map(|id| state.database.get_item(id))
-        .collect::<Result<Vec<_>, _>>()
+    let items = state
+        .database
+        .get_items(&ids)
         .map_err(|error| error.to_string())?;
+    if items.len() != ids.iter().collect::<std::collections::HashSet<_>>().len() {
+        return Err("Capture not found.".to_string());
+    }
 
     match build_copy_payload(&items, mode)? {
         CopyPayload::Text {
@@ -668,60 +976,72 @@ fn list_sections(state: State<'_, AppState>) -> Result<Vec<Section>, String> {
 }
 
 #[tauri::command]
-fn create_section(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    name: String,
-) -> Result<Section, String> {
-    mutate_items(&app, &state, |database| {
-        let section = database
-            .create_section(&name)
-            .map_err(|error| error.to_string())?;
-        Ok((section, vec![], vec![]))
+async fn create_section(app: AppHandle, name: String) -> Result<Section, String> {
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let section = database
+                .create_section(&name)
+                .map_err(|error| error.to_string())?;
+            Ok((section, vec![], vec![]))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn delete_section(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Vec<CaptureItem>, String> {
-    mutate_items(&app, &state, |database| {
-        let items = database
-            .delete_section(&id)
-            .map_err(|error| error.to_string())?;
-        Ok((items.clone(), items, vec![]))
+async fn delete_section(app: AppHandle, id: String) -> Result<Vec<CaptureItem>, String> {
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let items = database
+                .delete_section(&id)
+                .map_err(|error| error.to_string())?;
+            Ok((items.clone(), items, vec![]))
+        })
     })
+    .await
 }
 
 #[tauri::command]
-fn move_items_to_section(
+async fn move_items_to_section(
     app: AppHandle,
-    state: State<'_, AppState>,
     ids: Vec<String>,
     section_id: Option<String>,
 ) -> Result<Vec<CaptureItem>, String> {
-    mutate_items(&app, &state, |database| {
-        let items = database
-            .move_items_to_section(&ids, section_id.as_deref())
-            .map_err(|error| error.to_string())?;
-        Ok((items.clone(), items, vec![]))
+    blocking(app, move |app, state| {
+        mutate_items(app, state, |database| {
+            let items = database
+                .move_items_to_section(&ids, section_id.as_deref())
+                .map_err(|error| error.to_string())?;
+            Ok((items.clone(), items, vec![]))
+        })
     })
+    .await
 }
 
+/// Merged sources go to Trash (restorable) unless retention is Immediate.
 #[tauri::command]
-fn merge_items(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    ids: Vec<String>,
-) -> Result<CaptureItem, String> {
-    mutate_items(&app, &state, |database| {
-        let item = database
-            .merge_items(&ids)
-            .map_err(|error| error.to_string())?;
-        Ok((item.clone(), vec![item], ids))
+async fn merge_items(app: AppHandle, ids: Vec<String>) -> Result<CaptureItem, String> {
+    blocking(app, move |app, state| {
+        let trash_sources = state.trash_retention() != TrashRetention::Immediate;
+        mutate_items(app, state, |database| {
+            let (merged, sources) = database
+                .merge_items(&ids, trash_sources)
+                .map_err(|error| error.to_string())?;
+            if trash_sources {
+                let mut upserts = vec![merged.clone()];
+                upserts.extend(sources);
+                Ok((merged, upserts, vec![]))
+            } else {
+                remove_capture_files(&sources);
+                Ok((
+                    merged.clone(),
+                    vec![merged],
+                    sources.into_iter().map(|item| item.id).collect(),
+                ))
+            }
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -792,6 +1112,30 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn set_trash_retention(
+    state: State<'_, AppState>,
+    retention: TrashRetention,
+) -> Result<AppSettings, String> {
+    persist_setting(&state, TRASH_RETENTION_SETTING, retention.as_str())?;
+    if let Ok(mut current) = state.trash_retention.lock() {
+        *current = retention;
+    }
+    current_app_settings(&state)
+}
+
+#[tauri::command]
+fn set_default_capture_view(
+    state: State<'_, AppState>,
+    view: CaptureView,
+) -> Result<AppSettings, String> {
+    persist_setting(&state, CAPTURE_VIEW_SETTING, view.as_str())?;
+    if let Ok(mut current) = state.default_capture_view.lock() {
+        *current = view;
+    }
+    current_app_settings(&state)
+}
+
 fn current_permission_status(state: &AppState) -> PermissionStatus {
     PermissionStatus {
         accessibility_trusted: macos::accessibility_trusted(),
@@ -837,17 +1181,10 @@ fn permission_status(state: State<'_, AppState>) -> PermissionStatus {
 
 #[tauri::command]
 fn mark_accessibility_setup_seen(state: State<'_, AppState>) -> Result<PermissionStatus, String> {
-    if state.storage.blocked() {
-        return Err(state.storage.issue_message());
-    }
-    state
-        .database
-        .set_setting(ACCESSIBILITY_SETUP_SEEN_SETTING, "true")
-        .map_err(|error| error.to_string())?;
+    persist_setting(&state, ACCESSIBILITY_SETUP_SEEN_SETTING, "true")?;
     state
         .accessibility_setup_seen
         .store(true, Ordering::Relaxed);
-    snapshot_storage(&state, None, "Setting saved");
     Ok(current_permission_status(&state))
 }
 
@@ -859,6 +1196,12 @@ fn current_app_settings(state: &AppState) -> Result<AppSettings, String> {
             .map_err(|_| "shortcut lock was poisoned".to_string())?
             .clone(),
         keep_open: state.keep_open.load(Ordering::Relaxed),
+        trash_retention: state.trash_retention(),
+        default_capture_view: state
+            .default_capture_view
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(CaptureView::Page),
     })
 }
 
@@ -868,16 +1211,8 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 }
 
 fn persist_shortcuts(state: &AppState, shortcuts: &KeyboardShortcuts) -> Result<(), String> {
-    if state.storage.blocked() {
-        return Err(state.storage.issue_message());
-    }
     let serialized = serde_json::to_string(shortcuts).map_err(|error| error.to_string())?;
-    state
-        .database
-        .set_setting(SHORTCUTS_SETTING, &serialized)
-        .map_err(|error| error.to_string())?;
-    snapshot_storage(state, None, "Setting saved");
-    Ok(())
+    persist_setting(state, SHORTCUTS_SETTING, &serialized)
 }
 
 #[tauri::command]
@@ -996,15 +1331,12 @@ fn reset_shortcuts(app: AppHandle, state: State<'_, AppState>) -> Result<AppSett
 
 #[tauri::command]
 fn set_keep_open(state: State<'_, AppState>, keep_open: bool) -> Result<AppSettings, String> {
-    if state.storage.blocked() {
-        return Err(state.storage.issue_message());
-    }
-    state
-        .database
-        .set_setting(KEEP_OPEN_SETTING, if keep_open { "true" } else { "false" })
-        .map_err(|error| error.to_string())?;
+    persist_setting(
+        &state,
+        KEEP_OPEN_SETTING,
+        if keep_open { "true" } else { "false" },
+    )?;
     state.keep_open.store(keep_open, Ordering::Relaxed);
-    snapshot_storage(&state, None, "Setting saved");
     current_app_settings(&state)
 }
 
@@ -1231,20 +1563,23 @@ fn capture_clipboard(app: &AppHandle) {
     }
 }
 
+/// The image chooser is an in-app interaction, so when it closes the panel
+/// comes back to key instead of replaying a click-away hide. (The old replay
+/// ran inside the panel's completion handler, when the main window was not
+/// key yet, and hid the panel every time Keep Open was off.)
 fn finish_image_picker(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         let state = handle.state::<AppState>();
-        if state.open_image_pickers.load(Ordering::Acquire) != 0
-            || state.keep_open.load(Ordering::Relaxed)
-        {
+        if state.open_image_pickers.load(Ordering::Acquire) != 0 {
             return;
         }
         if let Some(window) = handle.get_webview_window("main") {
-            if !window.is_focused().unwrap_or(true)
-                && state.main_window_has_focused.swap(false, Ordering::Relaxed)
-            {
-                let _ = window.hide();
+            if window.is_visible().unwrap_or(false) {
+                #[cfg(target_os = "macos")]
+                let _ = macos::present_overlay_window(&window, true);
+                #[cfg(not(target_os = "macos"))]
+                let _ = window.set_focus();
             }
         }
     });
@@ -1334,6 +1669,21 @@ fn hide_window(app: &AppHandle, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.hide();
     }
+    if label == "main" {
+        // Idle moment: let a pending backup run now instead of after the debounce.
+        app.state::<AppState>().backups.nudge();
+    }
+}
+
+/// Startup maintenance and the hourly trash sweep. The hourly timer, not the
+/// webview, owns expiry so a panel that stays closed still purges on time.
+fn start_trash_purge_timer(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(TRASH_PURGE_INTERVAL);
+        if let Err(error) = purge_expired_trash_now(&app) {
+            eprintln!("Captura trash purge failed: {error}");
+        }
+    });
 }
 
 fn position_window_at_menu_bar(window: &WebviewWindow, right_margin: i32) {
@@ -1488,6 +1838,9 @@ pub fn run() {
                 }
             }
 
+            start_backup_worker(app.handle().clone());
+            start_trash_purge_timer(app.handle().clone());
+
             #[cfg(target_os = "macos")]
             smoke::start_if_requested(app.handle().clone());
             #[cfg(target_os = "macos")]
@@ -1498,7 +1851,7 @@ pub fn run() {
         .on_window_event(|window, event| match event {
             WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
-                let _ = window.hide();
+                hide_window(window.app_handle(), "main");
             }
             WindowEvent::Focused(focused) if window.label() == "main" => {
                 let state = window.state::<AppState>();
@@ -1508,7 +1861,7 @@ pub fn run() {
                     && state.open_image_pickers.load(Ordering::Acquire) == 0
                     && state.main_window_has_focused.swap(false, Ordering::Relaxed)
                 {
-                    let _ = window.hide();
+                    hide_window(window.app_handle(), "main");
                 }
             }
             _ => {}
@@ -1520,7 +1873,13 @@ pub fn run() {
             create_item,
             update_item,
             toggle_item,
+            set_items_status,
             delete_item,
+            delete_items,
+            restore_items,
+            purge_items,
+            empty_trash,
+            purge_expired_trash,
             copy_items,
             imports::choose_image_files,
             imports::paste_image_from_clipboard,
@@ -1541,6 +1900,8 @@ pub fn run() {
             set_shortcut,
             reset_shortcuts,
             set_keep_open,
+            set_trash_retention,
+            set_default_capture_view,
             capture_clipboard_now,
             request_accessibility,
             open_accessibility_settings,
@@ -1552,6 +1913,7 @@ pub fn run() {
                 app.state::<AppState>()
                     .storage
                     .record_event("exit_requested");
+                flush_backups_for_exit(app);
             }
             tauri::RunEvent::Exit => {
                 app.state::<AppState>().storage.finish_session();
@@ -1580,6 +1942,7 @@ mod tests {
             image_height: None,
             created_at: "2026-08-04T00:00:00Z".to_string(),
             updated_at: "2026-08-04T00:00:00Z".to_string(),
+            deleted_at: None,
         }
     }
 
@@ -1671,6 +2034,38 @@ mod tests {
             build_copy_payload(&[missing], CopyMode::Native),
             Err("This image capture has no stored file.".to_string())
         );
+    }
+
+    #[test]
+    fn stored_shortcuts_without_select_all_still_parse_with_its_default() {
+        let legacy = r#"{"capture":"Alt+Space","delete":"Command+Delete"}"#;
+        let parsed: KeyboardShortcuts = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.delete, "Command+Delete");
+        assert_eq!(parsed.select_all, "Command+A");
+        assert_eq!(parsed.get("selectAll"), Some("Command+A"));
+        let mut edited = parsed.clone();
+        edited.set("selectAll", "Shift+Command+A".into()).unwrap();
+        assert_eq!(edited.select_all, "Shift+Command+A");
+    }
+
+    #[test]
+    fn trash_retention_round_trips_and_defaults_safely() {
+        for value in [
+            TrashRetention::Immediate,
+            TrashRetention::SevenDays,
+            TrashRetention::TwentyEightDays,
+        ] {
+            assert_eq!(TrashRetention::parse(value.as_str()), Some(value));
+            assert_eq!(
+                serde_json::to_string(&value).unwrap(),
+                format!("\"{}\"", value.as_str())
+            );
+        }
+        assert_eq!(TrashRetention::parse("forever"), None);
+        assert!(TrashRetention::Immediate.max_age().is_zero());
+        assert_eq!(TrashRetention::SevenDays.max_age(), chrono::Duration::days(7));
+        assert_eq!(CaptureView::parse("source"), Some(CaptureView::Source));
+        assert_eq!(serde_json::to_string(&CaptureView::Page).unwrap(), "\"page\"");
     }
 
     #[test]
