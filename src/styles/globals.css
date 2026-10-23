@@ -1512,6 +1512,7 @@ kbd {
 }
 
 .settings-scroll {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -2099,7 +2100,7 @@ kbd {
 .app-toast {
   position: fixed;
   left: 50%;
-  bottom: 46px;
+  bottom: 54px;
   transform: translateX(-50%);
   z-index: 60;
   max-width: 356px;
