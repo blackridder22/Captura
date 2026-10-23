@@ -68,6 +68,24 @@ finally: qa('clipboard',operation='restore')
 limits=qa('import-images',requestId='native-limit',sectionId=None,paths=[str(fixtures/'alpha.png')]*21)
 assert not limits['items'] and limits['issues'][0]['code']=='too_many_files'
 report['checks']['batch_limit_is_visible_error']=True
+# 0.0.8 regression: the panel must stay open after the native image chooser
+# closes, even with "Keep Captura open" off (the default in a fresh test store).
+# Cancel runs the same completion handler as a confirmed import.
+js("window.__pickerQA=null;void window.__TAURI_INTERNALS__.invoke('choose_image_files',{requestId:'native-picker-stays-open',sectionId:null}).then(value=>window.__pickerQA={value}).catch(error=>window.__pickerQA={error:String(error)});true")
+deadline=time.monotonic()+10
+while time.monotonic()<deadline:
+    if any(w['picker'] and w['visible'] for w in qa('windows')): break
+    time.sleep(.1)
+else: raise AssertionError('image chooser did not open')
+qa('picker-cancel')
+cancelled=wait('window.__pickerQA')
+assert cancelled['value']['cancelled'],cancelled
+time.sleep(.5)
+windows=qa('windows')
+main=next(w for w in windows if w['title']=='Captura')
+assert main['visible'],windows
+assert not any(w['picker'] and w['visible'] for w in windows),windows
+report['checks']['panel_stays_open_after_image_chooser']=True
 report['pass']=all(report['checks'].values())
 (control.parent/'image-verification.json').write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report,indent=2))
