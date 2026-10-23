@@ -8,7 +8,9 @@ A fast, local-first macOS menubar app for capturing things you want to keep — 
 
 - **Global capture** — press `⌥ Space` (configurable) in any app to save the selected text, with clipboard fallback.
 - **Paste back** — send any capture straight into the app you were just working in, clipboard preserved.
-- **Queue, not a junk drawer** — inbox/prompts/notes/done filters, sections, search, multi-select (`⌘`/`⇧`), merge, copy as list.
+- **Queue, not a junk drawer** — inbox/prompts/notes/done filters, sections, search, multi-select (`⌘`/`⇧`, `⌘A`), merge, copy as list.
+- **A page per capture** — a Notion-style editor with a `/` block palette, autosave, and a CodeMirror Source view that keeps your Markdown exactly as written.
+- **Trash** — deletes are undoable; auto-delete after 7 or 28 days, or immediately.
 - **Markdown** — safe GFM rendering with an element/protocol allowlist.
 - **Fully editable shortcuts** — every shortcut in the app can be rebound in Settings.
 - **Overlay everywhere** — the panel joins fullscreen Spaces and floats above whatever you're doing.
