@@ -1,3 +1,4 @@
+import type { TiptapEditorHTMLElement } from "@tiptap/core";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,171 +6,196 @@ import type { CaptureDetailRequest, CaptureItem, CapturesChangedEvent } from "..
 import * as api from "../lib/api";
 import CaptureSheet from "./capture-sheet";
 import { defaultShortcuts } from "../lib/shortcuts";
+import { AUTOSAVE_DELAY_MS } from "../hooks/use-capture-detail";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const onClose = vi.fn();
+const onRestore = vi.fn(async () => {});
 let nativeChange: (change: CapturesChangedEvent) => void;
 vi.mock("../lib/api", () => ({
   getCaptureDetails: vi.fn(), updateItem: vi.fn(),
   copyItems: vi.fn(), attachmentUrl: (value: string) => value,
   onCapturesChanged: vi.fn(async (handler) => { nativeChange = handler; return vi.fn(); }),
 }));
-const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, deletedAt: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z" };
-const second = { ...first, id: "second", content: "# Second" };
+// CodeMirror measures layout; the page's Source logic is exercised through a
+// textarea stand-in here and the real editor has its own test.
+vi.mock("./capture-page/source-editor", () => ({
+  SourceEditor: ({ value, onChange, readOnly, ariaLabel }: { value: string; onChange: (value: string) => void; readOnly: boolean; ariaLabel: string }) => (
+    <textarea data-source-stub aria-label={ariaLabel} readOnly={readOnly} value={value} onChange={(event) => onChange(event.target.value)} />
+  ),
+}));
+const first: CaptureItem = { id: "first", kind: "note", content: "# First\n\nText", status: "open", sourceApp: null, sourceBundleId: null, sectionId: null, attachmentPath: null, thumbnailPath: null, imageWidth: null, imageHeight: null, createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00.000000001Z", deletedAt: null };
+const second = { ...first, id: "second", content: "# Second\n\nBody" };
+
 function click(container: HTMLElement, text: string) {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === text || element.getAttribute("aria-label") === text);
   if (!button) throw new Error(`Button missing: ${text}`);
   button.click();
 }
-function type(container: HTMLElement, text: string) {
-  const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
-  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, text);
-  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+function typeInto(field: HTMLTextAreaElement, text: string) {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(field, text);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
 }
+const sourceField = (container: HTMLElement) => container.querySelector<HTMLTextAreaElement>("[data-source-stub]");
+const pageEditor = (container: HTMLElement) => (container.querySelector(".ProseMirror") as TiptapEditorHTMLElement | null)?.editor ?? null;
+const status = (container: HTMLElement) => container.querySelector(".capture-save-status")?.textContent;
+const settle = async (ms = AUTOSAVE_DELAY_MS + 50) => { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); };
 
-describe("in-panel capture preview and editor lifecycle", () => {
+describe("capture page: one Notion-like page with autosave and a Source view", () => {
   let container: HTMLDivElement;
   let root: Root;
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.mocked(api.getCaptureDetails).mockImplementation(async (ids) => ids.map((id) => id === "first" ? first : second));
     vi.mocked(api.updateItem).mockImplementation(async (input) => ({ ...first, ...input, updatedAt: "2026-09-05T10:00:00.000000002Z" }));
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
   afterEach(() => { act(() => root.unmount()); container.remove(); vi.useRealTimers(); });
-  const mount = async (request: CaptureDetailRequest = { ids: ["first"], mode: "preview" }) => { await act(async () => { root.render(<CaptureSheet request={request} shortcuts={defaultShortcuts} onClose={onClose} />); }); };
+  const mount = async (request: CaptureDetailRequest = { ids: ["first"], mode: "edit" }, props: Partial<Parameters<typeof CaptureSheet>[0]> = {}) => {
+    await act(async () => { root.render(<CaptureSheet request={request} shortcuts={defaultShortcuts} onClose={onClose} onRestore={onRestore} {...props} />); });
+    // Tiptap finishes initialising (its "create" event) one timer tick later.
+    await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+  };
 
-  it("opens a read-only Markdown overlay, then exposes the editor with Source and Preview tabs", async () => {
+  it("opens as an editable page and offers the same Markdown in Source", async () => {
     await mount();
-    expect(container.querySelector("h1")?.textContent).toBe("First");
-    expect(container.querySelector("textarea")).toBeNull();
-    expect(container.querySelector('[role="tablist"]')).toBeNull();
-    act(() => click(container, "Edit"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(first.content);
-    expect(document.activeElement).toBe(container.querySelector("textarea"));
-    expect(container.querySelector('[role="dialog"]')?.parentElement?.classList.contains("capture-backdrop")).toBe(true);
-    expect(container.querySelector("[data-capture-preview]")).toBeNull();
-    act(() => click(container, "Preview"));
-    expect(container.querySelector("h1")?.textContent).toBe("First");
+    expect(container.querySelector("#capture-sheet-title")?.textContent).toBe("First");
+    expect(container.querySelector(".ProseMirror h1")?.textContent).toBe("First");
+    expect(container.querySelector(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
+    expect(document.activeElement).toBe(container.querySelector(".ProseMirror"));
+    expect(sourceField(container)).toBeNull();
+    act(() => click(container, "Source"));
+    expect(sourceField(container)?.value).toBe(first.content);
+    expect(api.updateItem).not.toHaveBeenCalled();
+    act(() => click(container, "Page"));
+    expect(container.querySelector(".ProseMirror h1")?.textContent).toBe("First");
   });
 
-  it("opens directly in the editor and contains Escape within the overlay", async () => {
-    await mount({ ids: ["first"], mode: "edit" });
-    const source = container.querySelector<HTMLTextAreaElement>("textarea")!;
-    expect(document.activeElement).toBe(source);
-    expect(source.value).toBe(first.content);
-    act(() => type(container, "unsaved draft"));
+  it("autosaves page edits as Markdown against the expected version", async () => {
+    await mount();
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent(" more").run(); });
+    expect(status(container)).toBe("Unsaved");
+    expect(api.updateItem).not.toHaveBeenCalled();
+    await settle();
+    expect(api.updateItem).toHaveBeenCalledWith({ id: "first", content: "# First\n\nText more", kind: "note", expectedUpdatedAt: first.updatedAt });
+    expect(status(container)).toBe("Saved");
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent("!").run(); });
+    await settle();
+    expect(api.updateItem).toHaveBeenLastCalledWith(expect.objectContaining({ content: "# First\n\nText more!", expectedUpdatedAt: "2026-09-05T10:00:00.000000002Z" }));
+  });
+
+  it("preserves every Source character and re-parses the page from it", async () => {
+    await mount();
+    act(() => click(container, "Source"));
+    const draft = "  # Indented\n\nLine with hard break  \n\n";
+    act(() => typeInto(sourceField(container)!, draft));
+    await settle();
+    expect(api.updateItem).toHaveBeenCalledWith({ id: first.id, content: draft, kind: "note", expectedUpdatedAt: first.updatedAt });
+    expect(sourceField(container)?.value).toBe(draft);
+    act(() => click(container, "Page"));
+    expect(container.querySelector(".ProseMirror")?.textContent).toContain("Indented");
+  });
+
+  it("flushes a pending draft before closing and keeps the page open when the flush fails", async () => {
+    await mount();
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent(" draft").run(); });
+    vi.mocked(api.updateItem).mockRejectedValueOnce(new Error("Disk full")).mockRejectedValueOnce(new Error("Disk full"));
+    await act(async () => { click(container, "Close capture"); await Promise.resolve(); });
+    expect(api.updateItem).toHaveBeenCalledOnce();
+    expect(onClose).not.toHaveBeenCalled();
+    const dialog = container.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Disk full");
+    act(() => click(dialog, "Keep editing"));
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(container.querySelector(".ProseMirror")?.textContent).toContain("draft");
+    await act(async () => { click(container, "Close capture"); await Promise.resolve(); });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { click(container.querySelector('[role="alertdialog"]')!, "Retry"); await Promise.resolve(); });
+    expect(api.updateItem).toHaveBeenCalledTimes(3);
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("never saves an empty draft and lets Discard close without writing", async () => {
+    await mount();
+    act(() => { pageEditor(container)!.commands.clearContent(true); });
+    await settle();
+    expect(api.updateItem).not.toHaveBeenCalled();
+    act(() => click(container, "Close capture"));
+    const dialog = container.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("empty");
+    expect([...dialog.querySelectorAll("button")].map((button) => button.textContent)).not.toContain("Retry");
+    await act(async () => { click(dialog, "Discard"); await Promise.resolve(); });
+    expect(api.updateItem).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("contains Escape and the save shortcut inside the overlay", async () => {
+    await mount();
     const queueKey = vi.fn();
     window.addEventListener("keydown", queueKey);
-    act(() => source.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
-    expect(onClose).not.toHaveBeenCalled();
+    const editor = container.querySelector<HTMLElement>(".ProseMirror")!;
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent(" typed").run(); });
+    await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", metaKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ content: "# First\n\nText typed" }));
+    expect(onClose).toHaveBeenCalledOnce();
     expect(queueKey).not.toHaveBeenCalled();
     window.removeEventListener("keydown", queueKey);
   });
 
-  it("leaves Enter available to buttons and Markdown links instead of opening the editor", async () => {
-    vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([{ ...first, content: "# Links\n\n[Documentation](https://example.com)" }]);
+  it("opens Markdown the page cannot keep in Source, with a way back", async () => {
+    vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([{ ...first, content: "| a | b |\n|---|---|\n| 1 | 2 |" }]);
     await mount();
-    const controls = [container.querySelector("button")!, container.querySelector("a")!];
-    for (const control of controls) {
-      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
-      act(() => { control.focus(); control.dispatchEvent(enter); });
-      expect(enter.defaultPrevented).toBe(false);
-      expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("preview");
-    }
+    expect(sourceField(container)?.value).toBe("| a | b |\n|---|---|\n| 1 | 2 |");
+    expect(container.textContent).toContain("Opened in Source to keep this capture's formatting.");
+    expect(api.updateItem).not.toHaveBeenCalled();
+    act(() => click(container, "Open as page anyway"));
+    expect(container.querySelector(".ProseMirror")).not.toBeNull();
+    expect(api.updateItem).not.toHaveBeenCalled();
   });
 
-  it("reads the full image and edits its caption without changing its image kind", async () => {
+  it("edits an image caption without changing its kind", async () => {
     const image = { ...first, kind: "image" as const, attachmentPath: "/full.png", thumbnailPath: "/thumbnail.png", imageWidth: 4000, imageHeight: 3000 };
     vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([image]);
     vi.mocked(api.updateItem).mockImplementationOnce(async (input) => ({ ...image, ...input, updatedAt: "2026-09-05T10:00:01Z" }));
     await mount();
     expect(container.querySelector("img")?.getAttribute("src")).toBe("/full.png");
-    act(() => click(container, "Edit"));
-    expect(container.querySelector("textarea")?.getAttribute("aria-label")).toBe("Image caption");
-    act(() => type(container, "New caption"));
-    await act(async () => click(container, "Save changes"));
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
+    const caption = container.querySelector<HTMLTextAreaElement>(".caption-field")!;
+    act(() => typeInto(caption, "New caption"));
+    await settle();
     expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ content: "New caption", kind: "image" }));
   });
 
-  it("preserves every Markdown source character and expected timestamp when saving", async () => {
-    await mount(); act(() => click(container, "Edit"));
-    const draft = "  # Indented\n\nLine with hard break  \n\n";
-    act(() => type(container, draft));
-    await act(async () => click(container, "Save changes"));
-    expect(api.updateItem).toHaveBeenCalledWith({ id: first.id, content: draft, kind: "note", expectedUpdatedAt: first.updatedAt });
-    expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("preview");
-    act(() => click(container, "Edit"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(draft);
-  });
-
-  it("keeps a failed save in the editor with its original draft", async () => {
-    vi.mocked(api.updateItem).mockRejectedValueOnce(new Error("Disk full"));
-    await mount(); act(() => click(container, "Edit")); act(() => type(container, "# Keep this draft\n"));
-    await act(async () => click(container, "Save changes"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("# Keep this draft\n");
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Disk full");
-    expect(container.querySelector<HTMLElement>(".capture-sheet")?.dataset.mode).toBe("edit");
-    expect(document.activeElement).toBe(container.querySelector("textarea"));
-  });
-
-  it("guards closing the overlay, keeps the draft on Cancel and closes on Discard", async () => {
-    await mount(); act(() => click(container, "Edit")); act(() => type(container, "unsaved"));
-    act(() => click(container, "Close capture"));
-    expect(container.querySelector('[role="alertdialog"]')).not.toBeNull();
-    act(() => click(container.querySelector('[role="alertdialog"]')!, "Cancel"));
-    expect(onClose).not.toHaveBeenCalled();
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("unsaved");
-    act(() => click(container, "Close capture"));
-    await act(async () => click(container.querySelector('[role="alertdialog"]')!, "Discard"));
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(container.querySelector("textarea")).toBeNull();
-    await mount({ ids: ["second"], mode: "preview" });
-    expect(container.querySelector("h1")?.textContent).toBe("Second");
-  });
-
-  it("keeps requested preview order and guards navigation away from a dirty capture", async () => {
-    await mount({ ids: ["second", "first"], mode: "preview" });
-    expect(container.querySelector("h1")?.textContent).toBe("Second");
-    act(() => click(container, "Edit")); act(() => type(container, "second draft"));
-    act(() => click(container, "Next capture"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("second draft");
-    await act(async () => click(container.querySelector('[role="alertdialog"]')!, "Discard"));
-    expect(container.querySelector("h1")?.textContent).toBe("First");
-    expect(container.textContent).toContain("2 of 2");
-  });
-
-  it("renders the current draft when switching to Preview and retains source when switching back", async () => {
+  it("shows a trashed capture read-only with Restore", async () => {
+    vi.mocked(api.getCaptureDetails).mockResolvedValueOnce([{ ...first, deletedAt: "2026-09-06T10:00:00Z" }]);
     await mount();
-    act(() => click(container, "Edit"));
-    expect(container.querySelector('[data-capture-preview]')).toBeNull();
-    act(() => type(container, "## Updated"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("## Updated");
-    act(() => click(container, "Preview"));
-    expect(container.querySelector("h2")?.textContent).toBe("Updated");
-    act(() => click(container, "Source"));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("## Updated");
+    expect(container.querySelector(".ProseMirror")?.getAttribute("contenteditable")).toBe("false");
+    expect(container.textContent).toContain("This capture is in Trash.");
+    act(() => click(container, "Restore"));
+    expect(onRestore).toHaveBeenCalledWith("first");
   });
 
-  it("retains deleted capture drafts and never offers to save them back", async () => {
-    await mount(); act(() => click(container, "Edit")); act(() => type(container, "recoverable draft"));
-    act(() => nativeChange({ revision: 1, upserts: [], deletedIds: [first.id] }));
+  it("keeps a draft when the capture is deleted or changed elsewhere", async () => {
+    await mount();
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent(" draft").run(); });
+    act(() => nativeChange({ revision: 3, upserts: [{ ...first, content: "remote change", updatedAt: "2026-09-05T10:00:00.000000003Z" }], deletedIds: [] }));
+    expect(container.textContent).toContain("This capture changed elsewhere.");
+    expect(container.querySelector(".ProseMirror")?.textContent).toContain("draft");
+    act(() => nativeChange({ revision: 4, upserts: [], deletedIds: [first.id] }));
     expect(container.textContent).toContain("This capture is no longer available.");
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("recoverable draft");
-    const save = [...container.querySelectorAll("button")].find((button) => button.textContent === "Save changes")!;
-    expect(save.disabled).toBe(true);
+    await settle();
     expect(api.updateItem).not.toHaveBeenCalled();
   });
 
-  it("keeps draft conflict state when a later commit arrives within the same millisecond", async () => {
-    await mount(); act(() => click(container, "Edit")); act(() => type(container, "my draft"));
-    act(() => nativeChange({ revision: 3, upserts: [{ ...first, content: "remote change", updatedAt: "2026-09-05T10:00:00.000000003Z" }], deletedIds: [] }));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("my draft");
-    expect(container.textContent).toContain("This capture changed elsewhere.");
-    vi.mocked(api.updateItem).mockRejectedValueOnce(new Error("Capture changed"));
-    await act(async () => click(container, "Save changes"));
-    expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ expectedUpdatedAt: first.updatedAt }));
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("my draft");
+  it("flushes before navigating between captures and keeps their order", async () => {
+    await mount({ ids: ["second", "first"], mode: "preview" });
+    expect(container.querySelector("#capture-sheet-title")?.textContent).toBe("Second");
+    vi.mocked(api.updateItem).mockImplementationOnce(async (input) => ({ ...second, ...input, updatedAt: "2026-09-05T10:00:00.000000005Z" }));
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent(" edited").run(); });
+    await act(async () => { click(container, "Next capture"); await Promise.resolve(); });
+    expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ id: "second", content: "# Second\n\nBody edited" }));
+    expect(container.querySelector("#capture-sheet-title")?.textContent).toBe("First");
+    expect(container.textContent).toContain("2 of 2");
   });
 });
