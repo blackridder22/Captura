@@ -2,13 +2,18 @@
 
 The implementation follows `docs/design/captura-menubar-concept.png` for
 information architecture and the local Fragment app for component craft.
+Tokens live in `src/styles/tokens.css`; motion in `src/styles/motion.css`;
+bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 
 ## Surface
 
 - Native popover footprint: 430 × 650 px.
 - One open list with separators; no dashboard cards.
-- Header, quick capture, filters, queue, and keyboard footer.
-- Separate 360 × 92 px confirmation HUD.
+- Header, quick capture, filters (with a trailing Trash tab), sections, queue,
+  and keyboard footer.
+- Capture page: one Notion-style page per capture with a Page | Source toggle.
+- Settings: General · Shortcuts · Editor · Trash · About.
+- Separate 360 × 92 px confirmation HUD (non-focusable).
 
 ## Brand tokens
 
@@ -21,16 +26,40 @@ information architecture and the local Fragment app for component craft.
 - Copper: `#f08b64`
 - Copper strong: `#ffb08f`
 - Success: `#58d17b`
+- Danger: `#f17b72`
+- Code: `#e2b6a3`
 
-## Component rules
+## Type
 
-- SF Pro/system font stack.
-- 13–14 px controls and metadata; 15–17 px capture content.
+- Families: `--font-sans` for UI and capture text, `--font-mono` for Source,
+  code and key caps (both self-hosted, OFL; see `tokens.css` for the chosen
+  families). The system stack remains the fallback.
+- Scale: 10 / 11 / 12 / 13 / 15 / 17 px (`--text-xs` … `--text-xl`). Nothing
+  on screen is smaller than 10 px.
+- Capture text 13–13.5 px at 1.35 (queue) to 1.65 (page) line height; metadata
+  10–11 px at weight 600; headings 740–790.
+- Tabular numerals for counts and times.
+
+## Shape and controls
+
+- Radii: 6 / 9 / 12 px for controls, 16 px sheets, 20 px panel.
+- Control heights: 28 / 32 / 34 px.
 - 1 px translucent borders with a soft top inset highlight.
-- 12–18 px radii; the outer popover uses 18 px.
-- 150–170 ms motion with reduced-motion support.
 - Selected rows use a copper left rail and a subtle surface lift.
 - Copper communicates action, focus, and selection. It is not decorative glow.
+
+## Motion
+
+- Durations: 120 ms (fast, hover/press/selection), 180 ms (base), 240 ms (slow,
+  sheets). Never above 300 ms in the UI.
+- Curves: `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)` for anything entering or
+  leaving; `--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1)` for movement on
+  screen (the filter underline).
+- Presence: overlays carry `data-state="enter | open | exit"` from
+  `usePresence` and animate with transitions, so rapid re-triggers retarget.
+- Keyboard-driven, high-frequency actions (panel open, arrow navigation) stay
+  near-instant: opacity only, ≤120 ms.
+- Reduced motion keeps the fades and removes movement.
 
 ## Allowed first-viewport copy
 
@@ -42,7 +71,7 @@ information architecture and the local Fragment app for component craft.
 - Prompts
 - Notes
 - Done
+- Trash
 - Option Space capture
 - Command Enter paste
 - Arrow keys navigate
-

@@ -311,8 +311,11 @@ return out;"""
 
 def measure_detail(qa: QA, total: int):
     body = f"""
-const P = window.__perf; const out = []; const ready = []; let complete = true;
-const sheetReady = () => document.querySelector('.capture-sheet textarea, .capture-sheet [data-capture-preview]');
+const P = window.__perf; const out = []; const ready = []; let complete = true; const views = {{}};
+// 0.0.8+: the capture sheet is a single page (Tiptap page, CodeMirror source, or
+// an image caption). Before 0.0.8 it was `.capture-sheet textarea, .capture-sheet
+// [data-capture-preview]`. The page element still carries `.capture-sheet`.
+const sheetReady = () => document.querySelector('.capture-page .ProseMirror, .capture-page .cm-editor, .capture-page .caption-field');
 for (let i = 0; i < {total}; i++) {{
   if (document.querySelector('.capture-sheet')) throw new Error('sheet still open');
   const row = document.querySelector('.queue-item');
@@ -322,13 +325,15 @@ for (let i = 0; i < {total}; i++) {{
   const tReady = await P.waitFor(sheetReady, 5000);
   const tPaint = await P.frames();
   ready.push(tReady - t0); out.push(tPaint - t0);
-  complete = complete && sheetReady().textContent.includes({json.dumps(DETAIL_END)});
   const target = sheetReady();
+  const view = target.classList.contains('ProseMirror') ? 'page' : target.classList.contains('cm-editor') ? 'source' : 'caption';
+  views[view] = (views[view] || 0) + 1;
+  complete = complete && (target.value ?? target.textContent).includes({json.dumps(DETAIL_END)});
   target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Escape', bubbles: true, cancelable: true }}));
   await P.waitFor(() => !document.querySelector('.capture-sheet'), 5000);
   await P.settle();
 }}
-return {{ paint: out, ready, complete }};"""
+return {{ paint: out, ready, complete, views }};"""
     return qa.run_async(body, timeout=300)
 
 
@@ -521,13 +526,19 @@ return {{ junkIds, ids, times }};""", timeout=600)
         log("snapshot_queue")
         samples = measure_invoke_loop(qa, "snapshot_queue", "()=>({})", total)
         results["metrics"]["snapshot_queue"] = summarize(samples[warm:])
-        results["queue_size"] = qa.run_async("return (await window.__perf.invoke('snapshot_queue')).items.length;")
+        # 0.0.8+: delete_item moves captures to Trash and snapshot_queue still returns
+        # trashed rows, so the measured queue is the rows with deletedAt === null.
+        sizes = qa.run_async("const s = await window.__perf.invoke('snapshot_queue');"
+                             "return {all: s.items.length, live: s.items.filter((i) => (i.deletedAt ?? null) === null).length};")
+        results["queue_size"] = sizes["live"]
+        results["snapshot_rows_total"] = sizes["all"]
 
         log("detail open (10 KiB)")
         detail = measure_detail(qa, total)
         results["metrics"]["detail_open"] = summarize(detail["paint"][warm:])
         results["metrics"]["detail_open_dom_ready"] = summarize(detail["ready"][warm:])
         results["detail_full_text_rendered"] = detail["complete"]
+        results["detail_views"] = detail.get("views")
 
         log("composer typing (10 KiB)")
         composer = measure_composer(qa, ten_kib_markdown(), total)
@@ -627,7 +638,9 @@ def render_markdown(results) -> str:
             lines.append(f"{key[:-4]}: start events {raw['event_types'] or 'none'}; failures {len(raw['failures'])}; "
                          f"focus-refresh observer (fetch wrapper) {'on' if raw['fetch_wrapped'] else 'unavailable'}.")
     if results.get("detail_full_text_rendered") is not None:
-        lines.append(f"Detail sheet rendered full 10 KiB text: {results['detail_full_text_rendered']}.")
+        lines.append(f"Detail sheet rendered full 10 KiB text: {results['detail_full_text_rendered']} (views {results.get('detail_views')}).")
+    if results.get("snapshot_rows_total") is not None and results["snapshot_rows_total"] != results.get("queue_size"):
+        lines.append(f"snapshot_queue returns {results['snapshot_rows_total']} rows ({results.get('queue_size')} live + trashed).")
     for note in results["notes"]:
         lines.append(f"Note: {note}")
     return "\n".join(lines)

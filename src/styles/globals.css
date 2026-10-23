@@ -1328,7 +1328,8 @@ kbd {
 
 .edit-sheet,
 .settings-sheet,
-.preview-sheet {
+.preview-sheet,
+.capture-page {
   width: 100%;
   overflow: hidden;
   border: 1px solid var(--line-strong);
@@ -1351,7 +1352,8 @@ kbd {
 
 .edit-sheet header,
 .settings-sheet header,
-.preview-sheet header {
+.preview-sheet header,
+.capture-page > header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1360,14 +1362,18 @@ kbd {
 
 .edit-sheet header > div,
 .settings-sheet header > div,
-.preview-sheet header > div {
+.preview-sheet header > div,
+.capture-page > header > div {
   display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 4px;
 }
 
 .edit-sheet header span,
 .settings-sheet header span,
-.preview-sheet header span {
+.preview-sheet header span,
+.capture-page > header span {
   color: var(--accent-strong);
   font-size: 10px;
   font-weight: 760;
@@ -1377,7 +1383,8 @@ kbd {
 
 .edit-sheet header strong,
 .settings-sheet header strong,
-.preview-sheet header strong {
+.preview-sheet header strong,
+.capture-page > header strong {
   color: var(--text);
   font-size: 15px;
   font-weight: 740;
@@ -2393,7 +2400,11 @@ kbd {
 .caption-field { display: block; width: calc(100% - 24px); margin: 12px; padding: 9px 11px; resize: none; border: 1px solid var(--line); border-radius: 9px; outline: none; background: rgba(0, 0, 0, 0.22); color: var(--text); font-size: 13px; line-height: 1.5; }
 .caption-field:focus { border-color: rgba(240, 139, 100, 0.46); }
 .capture-page .preview-image { margin: 12px 12px 0; width: calc(100% - 24px); }
-.capture-page > footer { gap: 6px; }
+.capture-page > footer { flex-direction: column; align-items: stretch; gap: 6px; }
+.capture-page .sheet-kind-switcher { min-height: 28px; padding: 2px; }
+.capture-page .sheet-kind-switcher button { min-height: 22px; padding: 0 7px; font-size: var(--text-xs); }
+.capture-page .capture-save-row { flex: 0 0 auto; }
+.capture-page .capture-footer-row > .capture-status:first-child { margin-right: 0; }
 .capture-footer-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .view-switcher { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, 0.18); }
 .view-switcher button { display: inline-flex; min-height: 24px; align-items: center; gap: 5px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: #8a8782; font-size: 10px; font-weight: 680; cursor: pointer; transition: color 140ms ease, background 140ms ease; }
