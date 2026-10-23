@@ -1,4 +1,6 @@
-import { EditorContent, useEditor } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
+import type { Transaction } from "@tiptap/pm/state";
+import { EditorContent } from "@tiptap/react";
 import { ChevronLeft, ChevronRight, Code2, Copy, FileText, Link2, PanelTop, RotateCcw, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useCaptureDetail } from "../../hooks/use-capture-detail";
@@ -8,8 +10,8 @@ import { captureTitle } from "../../lib/items";
 import { matchesShortcut } from "../../lib/shortcuts";
 import type { CaptureDetailRequest, CaptureView, KeyboardShortcutSettings } from "../../types";
 import { Button } from "../ui/button";
-import { loadMarkdown, pageExtensions, roundTripIsLossy, serializeMarkdown } from "./markdown-adapter";
-import { SlashCommand } from "./slash-command";
+import { parseMarkdown, roundTripIsLossy, serializeMarkdown } from "./markdown-adapter";
+import { getSharedPageEditor, PAGE_PLACEHOLDER, resetDocument, setSlashContainer } from "./page-editor-instance";
 import { SourceEditor } from "./source-editor";
 
 type CapturePageProps = {
@@ -27,8 +29,6 @@ const kinds = [
   { value: "note", label: "Note", icon: FileText },
   { value: "link", label: "Link", icon: Link2 },
 ] as const;
-
-const PLACEHOLDER = "Write anything. Type / for a block.";
 
 function saveStatus(detail: ReturnType<typeof useCaptureDetail>) {
   if (detail.trashed) return "In Trash · read only";
@@ -54,66 +54,58 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
   const showSource = !isImage && detail.view === "source";
   const lastEmitted = useRef<string | null>(null);
   const lossyCheckedFor = useRef<string | null>(null);
-  // Tiptap creates the view on mount but delays its "create" event by a
-  // timer; track the view ourselves so effects never touch an unmounted editor.
-  const viewMounted = useRef(false);
   const detailRef = useRef(detail);
   detailRef.current = detail;
-  const readOnlyRef = useRef(readOnly);
-  readOnlyRef.current = readOnly;
 
-  const extensions = useMemo(
-    () => [...pageExtensions(PLACEHOLDER), SlashCommand.configure({ container: () => sheetRef.current })],
-    [],
-  );
-  const editor = useEditor({
-    extensions,
-    content: "",
-    editable: false,
-    shouldRerenderOnTransaction: false,
-    editorProps: {
-      attributes: { class: "page-editor markdown-content", "aria-label": "Capture page", spellcheck: "true" },
-    },
-    // "mount" fires synchronously whenever EditorContent creates the view:
-    // first open, and again after returning from Source. Decide Page vs
-    // Source once per capture, then load the current draft (never the stale
-    // base) before anything can be typed, and focus.
-    onMount: ({ editor: instance }) => {
-      viewMounted.current = true;
-      const current = detailRef.current;
-      const base = current.base;
-      if (!base || base.kind === "image") return;
-      if (lossyCheckedFor.current !== base.id) {
-        lossyCheckedFor.current = base.id;
-        if (roundTripIsLossy(instance, base.content)) {
-          current.markLossy(true);
-          return;
-        }
-      }
-      loadMarkdown(instance, current.content);
-      lastEmitted.current = current.content;
-      instance.setEditable(!readOnlyRef.current);
-      if (!readOnlyRef.current) instance.commands.focus(current.mode === "edit" ? "end" : "start", { scrollIntoView: false });
-    },
-    onUnmount: () => { viewMounted.current = false; },
-    onUpdate: ({ editor: instance, transaction }) => {
+  // The editor is shared across opens (see page-editor-instance); this page
+  // only attaches handlers, loads the capture, and gives it back on close.
+  const editor = useMemo(() => getSharedPageEditor(), []);
+  useEffect(() => {
+    setSlashContainer(sheetRef.current);
+    const onUpdate = ({ editor: instance, transaction }: { editor: Editor; transaction: Transaction }) => {
       if (!transaction.docChanged) return;
       const markdown = serializeMarkdown(instance);
       lastEmitted.current = markdown;
       detailRef.current.setContent(markdown);
-    },
-    onBlur: () => { void detailRef.current.flush(); },
-  }, [activeId]);
+    };
+    const onBlur = () => { void detailRef.current.flush(); };
+    editor.on("update", onUpdate);
+    editor.on("blur", onBlur);
+    return () => {
+      editor.off("update", onUpdate);
+      editor.off("blur", onBlur);
+      editor.setEditable(false);
+      setSlashContainer(null);
+    };
+  }, [editor]);
 
-  useEffect(() => { if (editor && viewMounted.current && !editor.isDestroyed) editor.setEditable(!readOnly && !detail.loading); }, [editor, readOnly, detail.loading]);
+  // A freshly loaded capture: parse once, decide Page vs Source from that
+  // parse, load it as a fresh document (history cleared), then focus.
+  useEffect(() => {
+    const base = detail.base;
+    if (!base || isImage) return;
+    if (lossyCheckedFor.current !== base.id) {
+      lossyCheckedFor.current = base.id;
+      const parsed = parseMarkdown(editor, base.content);
+      if (roundTripIsLossy(editor, base.content, parsed)) {
+        detail.markLossy(true);
+        return;
+      }
+      resetDocument(editor, parsed);
+      lastEmitted.current = base.content;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, activeId, isImage]);
+
+  useEffect(() => { editor.setEditable(!readOnly && !detail.loading && Boolean(detail.base)); }, [editor, readOnly, detail.loading, detail.base]);
 
   // Source edits and remote updates reach the page through `content`.
   useEffect(() => {
-    if (!editor || !viewMounted.current || editor.isDestroyed || isImage || showSource) return;
+    if (isImage || showSource || !detail.base) return;
     if (detail.content === lastEmitted.current) return;
-    loadMarkdown(editor, detail.content);
+    resetDocument(editor, parseMarkdown(editor, detail.content));
     lastEmitted.current = detail.content;
-  }, [editor, detail.content, isImage, showSource]);
+  }, [editor, detail.content, isImage, showSource, detail.base]);
 
   useEffect(() => {
     if (detail.loading || !detail.base) return;
@@ -127,9 +119,12 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
     }
     if (isImage) {
       sheetRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+      return;
     }
-    // The page focuses itself in onCreate; Source focuses on mount.
-  }, [activeId, detail.loading, detail.pending, readOnly, isImage]);
+    if (!showSource) editor.commands.focus(detail.mode === "edit" ? "end" : "start", { scrollIntoView: false });
+    // Source focuses itself on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, detail.loading, detail.pending, readOnly, isImage, showSource, editor]);
   useEffect(() => setCopyMessage(""), [activeId]);
 
   const copy = async () => {
@@ -218,13 +213,13 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
               value={detail.content}
               readOnly={readOnly}
               autofocus={!readOnly}
-              placeholder={PLACEHOLDER}
+              placeholder={PAGE_PLACEHOLDER}
               ariaLabel="Markdown source"
               onChange={(value) => detail.setContent(value)}
               onBlur={() => void detail.flush()}
             />
           ) : (
-            <div className="capture-scroll page-scroll" data-capture-scroll tabIndex={readOnly ? 0 : -1} onMouseDown={(event) => { if (event.target === event.currentTarget && !readOnly && editor && viewMounted.current) { event.preventDefault(); editor.commands.focus("end"); } }}>
+            <div className="capture-scroll page-scroll" data-capture-scroll tabIndex={readOnly ? 0 : -1} onMouseDown={(event) => { if (event.target === event.currentTarget && !readOnly) { event.preventDefault(); editor.commands.focus("end"); } }}>
               <EditorContent editor={editor} />
             </div>
           )}

@@ -122,6 +122,12 @@ export default function App() {
   const failedThumbnails = useImageThumbnails(queueRef, visibleItems, applyUpdatedItems);
   useEffect(() => {
     if (loading) return;
+    // Warm the capture page (chunk + editor) while idle so the first open is cheap.
+    const idle = window.requestIdleCallback?.(() => { void import("./components/capture-sheet").then((module) => module.warmCapturePage()).catch(() => undefined); }, { timeout: 2000 });
+    return () => { if (idle !== undefined) window.cancelIdleCallback?.(idle); };
+  }, [loading]);
+  useEffect(() => {
+    if (loading) return;
     // Maintenance waits for two painted frames so the first render stays clean.
     let secondFrame = 0;
     const firstFrame = requestAnimationFrame(() => {

@@ -10,3 +10,5 @@ src-tauri/gen/
 release/
 output/
 .codex/
+__pycache__/
+*.pyc

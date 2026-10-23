@@ -69,10 +69,11 @@ export function normalizeMarkdown(markdown: string): string {
 
 /// True when parsing and re-serializing would change the capture beyond
 /// cosmetic spelling (HTML, tables, images, footnotes, setext headings …).
-export function roundTripIsLossy(editor: Editor, source: string): boolean {
+/// Pass the already parsed document to avoid parsing twice.
+export function roundTripIsLossy(editor: Editor, source: string, parsed?: JSONContent): boolean {
   if (!source.trim()) return false;
   try {
-    const serialized = manager(editor).serialize(parseMarkdown(editor, source));
+    const serialized = manager(editor).serialize(parsed ?? parseMarkdown(editor, source));
     if (serialized === source) return false;
     return normalizeMarkdown(serialized) !== normalizeMarkdown(source);
   } catch {
