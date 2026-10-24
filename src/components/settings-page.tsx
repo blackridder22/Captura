@@ -15,8 +15,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PresenceState } from "../hooks/use-presence";
+import { indicatorStyle, useSlidingIndicator } from "../hooks/use-sliding-indicator";
 import type { UpdateStatus } from "../hooks/use-updater";
 import type {
   AppSettings,
@@ -32,7 +33,7 @@ import { Button } from "./ui/button";
 
 type SettingsSection = "general" | "shortcuts" | "editor" | "trash" | "about";
 
-type SettingsSheetProps = {
+type SettingsPageProps = {
   permissions: PermissionStatus | null;
   settings: AppSettings;
   trashCount: number;
@@ -89,8 +90,11 @@ function updateStatusLine(status: UpdateStatus) {
 }
 
 function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void }) {
+  const host = useRef<HTMLDivElement>(null);
+  const indicator = useSlidingIndicator(host, value);
   return (
-    <div className="settings-segmented" role="radiogroup" aria-label={label}>
+    <div ref={host} className="settings-segmented" role="radiogroup" aria-label={label}>
+      <span className="nav-indicator" aria-hidden="true" data-ready={indicator.ready} style={indicatorStyle(indicator)} />
       {options.map((option) => (
         <button
           key={option.value}
@@ -98,6 +102,7 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
           role="radio"
           aria-checked={value === option.value}
           data-active={value === option.value}
+          data-indicator-key={option.value}
           onClick={() => onChange(option.value)}
         >
           {option.label}
@@ -107,7 +112,12 @@ function Segmented<T extends string>({ label, value, options, onChange }: { labe
   );
 }
 
-export function SettingsSheet({
+const sectionIndex = (id: SettingsSection) => sections.findIndex((section) => section.id === id);
+
+/// Settings is a full page over the queue (no modal card): header, section
+/// tabs with a sliding highlight, a scrolling body whose section slides in the
+/// direction of travel, and a footer with the version and Quit.
+export function SettingsPage({
   permissions,
   settings,
   trashCount,
@@ -125,31 +135,47 @@ export function SettingsSheet({
   updateStatus,
   onCheckUpdates,
   onInstallUpdate,
-}: SettingsSheetProps) {
+}: SettingsPageProps) {
   const [section, setSection] = useState<SettingsSection>("general");
+  const [direction, setDirection] = useState<"none" | "forward" | "back">("none");
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
   const permissionsReady = Boolean(permissions?.accessibilityTrusted && permissions.postEventTrusted);
+  const page = useRef<HTMLElement>(null);
+  const nav = useRef<HTMLElement>(null);
+  const indicator = useSlidingIndicator(nav, section);
+
+  // The queue behind is inert, so the page itself takes focus; Escape and
+  // Tab then work from here without a visible ring on a mouse open.
+  useEffect(() => { page.current?.focus({ preventScroll: true }); }, []);
+
+  const switchSection = (next: SettingsSection) => {
+    if (next === section) return;
+    setDirection(sectionIndex(next) > sectionIndex(section) ? "forward" : "back");
+    setSection(next);
+  };
 
   return (
-    <div className="sheet-backdrop" data-state={presenceState} onMouseDown={onClose}>
-      <section
-        className="settings-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
+    <section
+      ref={page}
+      className="panel-page settings-page"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      data-state={presenceState}
+      tabIndex={-1}
+    >
+        <header className="page-header">
           <div>
             <span>Settings</span>
             <strong id="settings-title">Make Captura work your way.</strong>
           </div>
-          <Button variant="ghost" size="icon" aria-label="Close settings" onClick={onClose}>
+          <Button variant="ghost" size="icon" aria-label="Close settings" title="Close settings (Esc)" onClick={onClose}>
             <X size={16} />
           </Button>
         </header>
 
-        <nav className="settings-nav" role="tablist" aria-label="Settings sections">
+        <nav ref={nav} className="settings-nav" role="tablist" aria-label="Settings sections">
+          <span className="nav-indicator" aria-hidden="true" data-ready={indicator.ready} style={indicatorStyle(indicator)} />
           {sections.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
@@ -157,7 +183,8 @@ export function SettingsSheet({
               role="tab"
               aria-selected={section === id}
               data-active={section === id}
-              onClick={() => setSection(id)}
+              data-indicator-key={id}
+              onClick={() => switchSection(id)}
             >
               <Icon size={13} strokeWidth={1.9} />
               <span>{label}</span>
@@ -165,8 +192,8 @@ export function SettingsSheet({
           ))}
         </nav>
 
-        <div className="settings-scroll" role="tabpanel">
-          <div className="settings-section" key={section}>
+        <div className="settings-scroll page-body" role="tabpanel">
+          <div className="settings-section" key={section} data-direction={direction}>
             {section === "general" ? (
               <>
                 <div className="settings-row">
@@ -307,14 +334,13 @@ export function SettingsSheet({
           </div>
         </div>
 
-        <footer>
+        <footer className="page-footer">
           <span>Captura {appVersion}</span>
           <Button variant="ghost" size="sm" onClick={onQuit}>
             <LogOut size={14} />
             Quit Captura
           </Button>
         </footer>
-      </section>
-    </div>
+    </section>
   );
 }

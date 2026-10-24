@@ -312,12 +312,13 @@ return out;"""
 def measure_detail(qa: QA, total: int):
     body = f"""
 const P = window.__perf; const out = []; const ready = []; let complete = true; const views = {{}};
-// 0.0.8+: the capture sheet is a single page (Tiptap page, CodeMirror source, or
-// an image caption). Before 0.0.8 it was `.capture-sheet textarea, .capture-sheet
-// [data-capture-preview]`. The page element still carries `.capture-sheet`.
+// 0.0.8+: the capture opens as a full page (Tiptap page, CodeMirror source, or
+// an image caption) inside `.capture-page-host`, which stays mounted through
+// its exit transition. Before 0.0.8 it was a `.capture-sheet` card with
+// `textarea` / `[data-capture-preview]`.
 const sheetReady = () => document.querySelector('.capture-page .ProseMirror, .capture-page .cm-editor, .capture-page .caption-field');
 for (let i = 0; i < {total}; i++) {{
-  if (document.querySelector('.capture-sheet')) throw new Error('sheet still open');
+  if (document.querySelector('.capture-page-host')) throw new Error('page still open');
   const row = document.querySelector('.queue-item');
   if (!row || !row.textContent.includes({json.dumps(DETAIL_TITLE)})) throw new Error('10 KiB capture is not the first row');
   const t0 = performance.now();
@@ -330,7 +331,7 @@ for (let i = 0; i < {total}; i++) {{
   views[view] = (views[view] || 0) + 1;
   complete = complete && (target.value ?? target.textContent).includes({json.dumps(DETAIL_END)});
   target.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Escape', bubbles: true, cancelable: true }}));
-  await P.waitFor(() => !document.querySelector('.capture-sheet'), 5000);
+  await P.waitFor(() => !document.querySelector('.capture-page-host'), 5000);
   await P.settle();
 }}
 return {{ paint: out, ready, complete, views }};"""

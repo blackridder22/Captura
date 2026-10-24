@@ -5,7 +5,8 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useRef } from "react";
+import { indicatorStyle, useSlidingIndicator } from "../hooks/use-sliding-indicator";
 import type { QueueFilter } from "../types";
 
 type FilterTabsProps = {
@@ -21,32 +22,15 @@ const filters = [
   { value: "done" as const, label: "Done", icon: CheckCircle2 },
 ];
 
-/// The active underline is one element that slides between tabs (transform
-/// only). It measures the active tab, so it follows resizes and count widths.
+/// The active underline is one element that slides between tabs. It measures
+/// the active tab, so it follows resizes and count widths.
 export function FilterTabs({
   active,
   counts,
   onChange,
 }: FilterTabsProps) {
   const nav = useRef<HTMLElement>(null);
-  const [indicator, setIndicator] = useState<{ x: number; width: number; ready: boolean }>({ x: 0, width: 0, ready: false });
-
-  useLayoutEffect(() => {
-    const host = nav.current;
-    if (!host) return;
-    const measure = () => {
-      const tab = host.querySelector<HTMLElement>(`[data-filter="${active}"]`);
-      if (!tab) return;
-      const inset = 2;
-      const x = tab.offsetLeft + inset;
-      const width = Math.max(tab.offsetWidth - inset * 2, 8);
-      setIndicator((current) => ({ x, width, ready: current.ready || current.width > 0 }));
-    };
-    measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    observer?.observe(host);
-    return () => observer?.disconnect();
-  }, [active, counts]);
+  const indicator = useSlidingIndicator(nav, active, [counts]);
 
   return (
     <nav ref={nav} className="filter-tabs" aria-label="Capture filters">
@@ -55,6 +39,7 @@ export function FilterTabs({
           key={value}
           type="button"
           data-filter={value}
+          data-indicator-key={value}
           data-active={active === value}
           onClick={() => onChange(value)}
           aria-current={active === value ? "page" : undefined}
@@ -64,11 +49,12 @@ export function FilterTabs({
           <small>{counts[value]}</small>
         </button>
       ))}
-      {/* Trash sits apart from the live filters: icon only, count on hover/active. */}
+      {/* Trash sits apart from the live filters: icon only, count when active or non-empty. */}
       <button
         type="button"
         className="filter-trash"
         data-filter="trash"
+        data-indicator-key="trash"
         data-active={active === "trash"}
         data-empty={counts.trash === 0}
         onClick={() => onChange("trash")}
@@ -83,7 +69,7 @@ export function FilterTabs({
         className="filter-indicator"
         aria-hidden="true"
         data-ready={indicator.ready}
-        style={{ transform: `translateX(${indicator.x}px) scaleX(${indicator.width})`, opacity: indicator.width ? 1 : 0 }}
+        style={indicatorStyle(indicator, 2)}
       />
     </nav>
   );

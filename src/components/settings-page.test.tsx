@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultShortcuts } from "../lib/shortcuts";
 import type { AppSettings } from "../types";
-import { SettingsSheet } from "./settings-sheet";
+import { SettingsPage } from "./settings-page";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,12 +19,12 @@ const click = (container: HTMLElement, text: string) => {
   button.click();
 };
 
-describe("SettingsSheet sections", () => {
+describe("SettingsPage sections", () => {
   let container: HTMLDivElement;
   let root: Root;
   beforeEach(() => { vi.clearAllMocks(); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
   afterEach(() => { act(() => root.unmount()); container.remove(); });
-  const mount = (trashCount = 0) => act(() => { root.render(<SettingsSheet permissions={{ accessibilityTrusted: true, postEventTrusted: true, globalShortcutRegistered: true, setupSeen: true }} settings={settings} trashCount={trashCount} updateStatus={{ phase: "idle" }} {...handlers} />); });
+  const mount = (trashCount = 0) => act(() => { root.render(<SettingsPage permissions={{ accessibilityTrusted: true, postEventTrusted: true, globalShortcutRegistered: true, setupSeen: true }} settings={settings} trashCount={trashCount} updateStatus={{ phase: "idle" }} {...handlers} />); });
 
   it("opens on General and switches sections through the nav", () => {
     mount();
@@ -39,6 +39,20 @@ describe("SettingsSheet sections", () => {
     act(() => click(container, "Editor"));
     act(() => click(container, "Source"));
     expect(handlers.onDefaultCaptureViewChange).toHaveBeenCalledWith("source");
+  });
+
+  it("is a full page that takes focus and slides sections in the direction of travel", () => {
+    mount();
+    const page = container.querySelector<HTMLElement>(".panel-page.settings-page");
+    expect(page?.getAttribute("role")).toBe("dialog");
+    expect(container.querySelector(".sheet-backdrop")).toBeNull();
+    expect(document.activeElement).toBe(page);
+    expect(container.querySelector(".settings-section")?.getAttribute("data-direction")).toBe("none");
+    act(() => click(container, "Trash"));
+    expect(container.querySelector(".settings-section")?.getAttribute("data-direction")).toBe("forward");
+    act(() => click(container, "General"));
+    expect(container.querySelector(".settings-section")?.getAttribute("data-direction")).toBe("back");
+    expect(container.querySelectorAll(".settings-nav .nav-indicator").length).toBe(1);
   });
 
   it("asks before emptying Trash and disables it when empty", () => {

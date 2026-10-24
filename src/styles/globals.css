@@ -158,12 +158,6 @@ textarea:focus-visible {
   color: #8a817c;
 }
 
-.header-actions .panel-close-button:hover {
-  border-color: rgba(240, 139, 100, 0.28);
-  background: rgba(240, 139, 100, 0.09);
-  color: var(--accent-strong);
-}
-
 .brand-lockup {
   display: grid;
   gap: 4px;
@@ -305,20 +299,10 @@ textarea:focus-visible {
     color var(--dur-fast) ease,
     border-color var(--dur-fast) ease,
     background var(--dur-fast) ease,
-    transform var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) ease;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .ui-button:hover {
-    border-color: var(--line-strong);
-    color: var(--text);
-    transform: translateY(-1px);
-  }
-}
-
 .ui-button:active {
-  transform: translateY(0) scale(0.985);
   box-shadow:
     inset 0 2px 8px rgba(0, 0, 0, 0.48),
     inset 0 1px rgba(255, 255, 255, 0.055);
@@ -327,7 +311,6 @@ textarea:focus-visible {
 .ui-button:disabled {
   cursor: default;
   opacity: 0.38;
-  transform: none;
 }
 
 .ui-button[data-size="sm"] {
@@ -352,12 +335,6 @@ textarea:focus-visible {
   color: var(--subtle);
 }
 
-.ui-button[data-variant="ghost"]:hover {
-  border-color: var(--line);
-  background: rgba(255, 255, 255, 0.045);
-  color: var(--text);
-}
-
 .ui-button[data-variant="accent"] {
   border-color: rgba(240, 139, 100, 0.45);
   background:
@@ -373,11 +350,6 @@ textarea:focus-visible {
     inset 0 1px rgba(255, 255, 255, 0.34),
     inset 0 -1px rgba(104, 38, 15, 0.3),
     0 9px 22px rgba(0, 0, 0, 0.26);
-}
-
-.ui-button[data-variant="accent"]:hover {
-  border-color: rgba(255, 176, 143, 0.7);
-  color: #1d0b04;
 }
 
 .ui-kbd,
@@ -465,10 +437,6 @@ kbd {
   transition: color var(--dur-fast) ease, box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.composer-tabs button[role="tab"]:hover {
-  color: var(--muted);
-}
-
 .composer-tabs button[role="tab"][data-active="true"] {
   color: var(--accent-strong);
   box-shadow: inset 0 -2px 0 var(--accent);
@@ -536,9 +504,7 @@ kbd {
   cursor: pointer;
 }
 
-.kind-switcher button:hover,
 .kind-switcher button[data-active="true"],
-.sheet-kind-switcher button:hover,
 .sheet-kind-switcher button[data-active="true"] {
   background: rgba(255, 255, 255, 0.055);
   color: var(--muted);
@@ -586,10 +552,6 @@ kbd {
 .filter-tabs button::after {
   display: none;
   content: none;
-}
-
-.filter-tabs button:hover {
-  color: var(--muted);
 }
 
 .filter-tabs button[data-active="true"] {
@@ -661,11 +623,6 @@ kbd {
   font-size: var(--text-xs);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-}
-
-.section-bar button:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-  color: var(--muted);
 }
 
 .section-bar button[data-active="true"] {
@@ -809,14 +766,7 @@ kbd {
   transition:
     border-color 140ms ease,
     color 150ms ease,
-    background 150ms ease,
-    transform 150ms ease;
-}
-
-.queue-state-control:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--accent-strong);
-  transform: scale(1.05);
+    background 150ms ease;
 }
 
 .queue-state-control[data-mode="status"][data-done="true"] {
@@ -1048,10 +998,6 @@ kbd {
   height: 25px;
   min-height: 25px;
   border-radius: 7px;
-}
-
-.row-actions .danger-action:hover {
-  color: var(--danger);
 }
 
 .row-actions .paste-button {
@@ -1388,23 +1334,8 @@ kbd {
   cursor: pointer;
 }
 
-.sheet-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  padding: 6px;
-  border-radius: 18px;
-  background: rgba(0, 0, 0, 0.54);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-}
-
 .edit-sheet,
-.settings-sheet,
-.preview-sheet,
-.capture-page {
+.preview-sheet {
   width: 100%;
   overflow: hidden;
   border: 1px solid var(--line-strong);
@@ -1426,8 +1357,8 @@ kbd {
 }
 
 .edit-sheet header,
-.settings-sheet header,
 .preview-sheet header,
+.page-header,
 .capture-page > header {
   display: flex;
   align-items: flex-start;
@@ -1436,8 +1367,8 @@ kbd {
 }
 
 .edit-sheet header > div,
-.settings-sheet header > div,
 .preview-sheet header > div,
+.page-header > div,
 .capture-page > header > div {
   display: grid;
   flex: 1 1 auto;
@@ -1446,8 +1377,8 @@ kbd {
 }
 
 .edit-sheet header span,
-.settings-sheet header span,
 .preview-sheet header span,
+.page-header span,
 .capture-page > header span {
   color: var(--accent-strong);
   font-size: 10px;
@@ -1457,8 +1388,8 @@ kbd {
 }
 
 .edit-sheet header strong,
-.settings-sheet header strong,
 .preview-sheet header strong,
+.page-header strong,
 .capture-page > header strong {
   color: var(--text);
   font-size: 15px;
@@ -1573,19 +1504,6 @@ kbd {
   min-height: 24px;
 }
 
-.settings-sheet {
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 15px;
-}
-
-.settings-sheet header {
-  flex: 0 0 auto;
-  margin-bottom: 16px;
-}
-
 .settings-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -1626,11 +1544,6 @@ kbd {
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
-}
-
-.settings-group-title > button:hover {
-  background: rgba(255, 255, 255, 0.045);
-  color: var(--accent-strong);
 }
 
 .shortcut-settings {
@@ -1702,7 +1615,6 @@ kbd {
   cursor: pointer;
 }
 
-.shortcut-recorder:hover,
 .shortcut-recorder[data-recording="true"] {
   border-color: rgba(240, 139, 100, 0.42);
   color: var(--accent-strong);
@@ -1853,20 +1765,6 @@ kbd {
   color: #9d9994;
   font-size: 10px;
   line-height: 1.48;
-}
-
-.settings-sheet footer {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 16px;
-}
-
-.settings-sheet footer > span {
-  color: #5f5e5b;
-  font-size: 10px;
-  font-weight: 650;
 }
 
 .preview-sheet {
@@ -2363,9 +2261,7 @@ kbd {
   }
 }
 
-/* Capture previews and editors stay centered within the menubar panel. */
 .queue-view { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
-.capture-backdrop { padding: 12px; overflow: hidden; }
 .capture-sheet { display: flex; flex-direction: column; align-self: auto; min-height: 0; max-height: 100%; padding: 15px; }
 .capture-sheet.preview-sheet { height: min(520px, 100%); }
 .capture-sheet.edit-sheet { height: min(440px, 100%); }
@@ -2421,19 +2317,15 @@ kbd {
 .trash-strip-copy small { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .trash-strip-actions, .trash-strip-confirm { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 4px; }
 .trash-strip-link { padding: 3px 5px; border: 0; border-radius: 5px; background: transparent; color: var(--accent-strong); font-size: 10px; font-weight: 640; cursor: pointer; }
-.trash-strip-link:hover { background: rgba(240, 139, 100, 0.09); }
 .ui-button[data-variant="danger"] { border-color: rgba(241, 123, 114, 0.45); background: rgba(241, 123, 114, 0.14); color: #ffb3ad; }
-.ui-button[data-variant="danger"]:hover { border-color: rgba(241, 123, 114, 0.7); background: rgba(241, 123, 114, 0.22); color: #ffd1cd; }
 .queue-item[data-trashed="true"] .markdown-compact { color: var(--muted); }
 .queue-item[data-trashed="true"] .queue-state-control[data-mode="status"] { opacity: 0.4; pointer-events: none; }
 .row-actions .restore-button { margin-left: 3px; }
 .app-toast { display: inline-flex; align-items: center; gap: 10px; }
 .app-toast[data-actionable="true"] { pointer-events: auto; padding-right: 8px; }
 .toast-action { padding: 3px 8px; border: 1px solid rgba(240, 139, 100, 0.4); border-radius: 6px; background: rgba(240, 139, 100, 0.12); color: var(--accent-strong); font-size: 11px; font-weight: 720; cursor: pointer; }
-.toast-action:hover { background: rgba(240, 139, 100, 0.2); }
 .settings-segmented { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, 0.22); }
 .settings-segmented button { min-height: 22px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #8c8984; font-size: 10px; font-weight: 680; cursor: pointer; white-space: nowrap; }
-.settings-segmented button:hover { color: var(--muted); }
 .settings-segmented button[data-active="true"] { background: rgba(240, 139, 100, 0.13); color: var(--accent-strong); box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.22); }
 
 /* ---- Capture page: Tiptap page, CodeMirror source, slash palette (0.0.8) ---- */
@@ -2489,12 +2381,50 @@ kbd {
 /* ---- Settings navigation and hints (0.0.8) ---- */
 .settings-nav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; flex: 0 0 auto; margin: -4px 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-md); background: rgba(0, 0, 0, 0.2); }
 .settings-nav button { display: inline-flex; min-height: 28px; align-items: center; justify-content: center; gap: 5px; padding: 0 4px; border: 0; border-radius: var(--radius-sm); background: transparent; color: #86837f; font-size: var(--text-xs); font-weight: 680; cursor: pointer; transition: color var(--dur-fast) ease, background var(--dur-fast) ease; }
-.settings-nav button:hover { color: var(--muted); }
 .settings-nav button[data-active="true"] { background: rgba(240, 139, 100, 0.12); color: var(--accent-strong); box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.22); }
 .settings-nav button span { white-space: nowrap; }
 .settings-section { display: block; }
 .settings-section > .settings-row:first-child { padding-top: 2px; }
 .settings-hint { margin: 12px 2px 0; color: var(--subtle); font-size: var(--text-xs); line-height: 1.5; }
 .settings-inline-actions { display: inline-flex; gap: 4px; }
-.settings-sheet header { margin-bottom: 12px; }
 .capture-sheet-content .capture-scroll, .source-editor { border-radius: var(--radius-lg); }
+
+/* ---- Full-panel pages: Settings and the capture page (0.0.8) ----
+   Pages cover the queue edge to edge inside the panel's rounded clip. No
+   dimmed backdrop: a blurred layer over the window's transparent corners
+   painted the webview's under-page colour as a square. */
+.panel-page { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; min-height: 0; overflow: hidden; border-radius: inherit; background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 16%), #101214; outline: none; }
+.page-header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 16px 16px 0; }
+.page-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0 16px 12px; scrollbar-color: rgba(255, 255, 255, 0.12) transparent; scrollbar-width: thin; }
+.page-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 6px 12px 6px 16px; border-top: 1px solid rgba(255, 255, 255, 0.073); background: rgba(10, 11, 12, 0.62); }
+.page-footer > span { color: #5f5e5b; font-size: var(--text-xs); font-weight: 650; }
+.capture-page-loading { display: grid; place-items: center; color: var(--subtle); font-size: var(--text-base); }
+
+/* Settings page. The section highlight is one element sliding under the tabs. */
+.settings-page .settings-nav { position: relative; margin: 14px 16px 12px; }
+.settings-nav button { position: relative; z-index: 1; }
+.settings-nav button[data-active="true"] { background: transparent; box-shadow: none; }
+.nav-indicator { position: absolute; top: 3px; bottom: 3px; left: 0; width: 0; border-radius: var(--radius-sm); background: rgba(240, 139, 100, 0.12); box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.22); pointer-events: none; }
+.settings-segmented { position: relative; }
+.settings-segmented button { position: relative; z-index: 1; }
+.settings-segmented button[data-active="true"] { background: transparent; box-shadow: none; }
+.settings-segmented .nav-indicator { top: 2px; bottom: 2px; border-radius: 6px; background: rgba(240, 139, 100, 0.13); }
+.settings-page .settings-scroll { padding-right: 13px; }
+.settings-page .settings-section { display: block; }
+
+/* Capture page: header, notices and content keep the panel's 16 px gutter; the
+   footer is a strip like the queue's. */
+.capture-page { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.capture-page > header { flex: 0 0 auto; padding: 14px 16px 0; }
+.capture-page > .capture-navigation { flex: 0 0 auto; margin: 6px 16px 0; }
+.capture-page > .capture-notice { margin: 10px 16px 0; }
+.capture-page > .capture-sheet-content { margin: 12px 16px 0; }
+.capture-page > footer { flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin: 10px 0 0; padding: 7px 12px 8px 16px; border-top: 1px solid rgba(255, 255, 255, 0.073); background: rgba(10, 11, 12, 0.62); }
+
+/* Composer: sliding underline under the kind tabs; the field grows by whole
+   lines up to five, then scrolls. The card never shrinks to fit the panel. */
+.quick-capture { flex: 0 0 auto; }
+.composer-tabs { position: relative; }
+.composer-tabs button[role="tab"], .composer-tabs button[role="tab"][data-active="true"] { box-shadow: none; }
+.composer-indicator { position: absolute; bottom: -1px; left: 0; width: 0; height: 2px; border-radius: 999px 999px 0 0; background: var(--accent); pointer-events: none; }
+.quick-capture textarea { height: 40px; max-height: 100px; overflow-y: auto; scrollbar-width: thin; }

@@ -30,7 +30,7 @@ import { QueueHeader } from "./components/queue-header";
 import { QueueItem } from "./components/queue-item";
 import { SectionBar } from "./components/section-bar";
 import { SectionContextMenu } from "./components/section-context-menu";
-import { SettingsSheet } from "./components/settings-sheet";
+import { SettingsPage } from "./components/settings-page";
 import { WelcomeSetup } from "./components/welcome-setup";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
@@ -110,8 +110,8 @@ export default function App() {
     contextMenu,
     setContextMenu,
     settingsOpen,
-    setSettingsOpen,
     openSettings,
+    closeSettings,
     dismissTop,
   } = useOverlays({ hasMultiSelection: selectedIds.length > 0, clearSelection: clearMultiSelection });
   const {
@@ -347,11 +347,11 @@ export default function App() {
       onMouseDown={() => contextMenu && setContextMenu(null)}
     >
       <section className="captura-panel" aria-label="Captura queue">
-        <div className="queue-view" inert={captureRequest !== null}>
+        <div className="queue-view" inert={captureRequest !== null || settingsOpen} data-covered={captureRequest !== null || settingsOpen}>
         <QueueHeader
           query={query}
           onQueryChange={setQuery}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onClose={() => void hideMainWindow()}
           searchRef={searchRef}
           searchShortcut={appSettings.shortcuts.search}
@@ -418,7 +418,7 @@ export default function App() {
               </span>
             ) : (
               <span className="trash-strip-actions">
-                <button type="button" className="trash-strip-link" onClick={() => setSettingsOpen(true)}>Change</button>
+                <button type="button" className="trash-strip-link" onClick={openSettings}>Change</button>
                 <Button variant="ghost" size="sm" disabled={!counts.trash} onClick={() => setConfirmingEmptyTrash(true)}>Empty trash</Button>
               </span>
             )}
@@ -554,9 +554,31 @@ export default function App() {
           )}
         </footer>
         </div>
-        {capturePresence.mounted && shownCaptureRequest ? <Suspense fallback={<div className="sheet-backdrop capture-backdrop" role="status">Loading capture…</div>}>
+        {capturePresence.mounted && shownCaptureRequest ? <Suspense fallback={<div className="panel-page capture-page-loading" role="status">Loading capture…</div>}>
           <CaptureSheet request={shownCaptureRequest} shortcuts={appSettings.shortcuts} defaultView={appSettings.defaultCaptureView} onDefaultViewChange={changeDefaultCaptureView} onRestore={handleRestore} presenceState={capturePresence.state} onClose={closeDetail} />
         </Suspense> : null}
+
+        {settingsPresence.mounted ? (
+          <SettingsPage
+            permissions={permissions}
+            settings={appSettings}
+            trashCount={counts.trash}
+            presenceState={settingsPresence.state}
+            onClose={closeSettings}
+            onRequestAccessibility={requestAccessibilityAndRefresh}
+            onShortcutChange={changeShortcut}
+            onResetShortcuts={resetAllShortcuts}
+            onKeepOpenChange={changeKeepOpen}
+            onTrashRetentionChange={changeTrashRetention}
+            onDefaultCaptureViewChange={changeDefaultCaptureView}
+            onEmptyTrash={emptyAllTrash}
+            onCaptureClipboard={captureClipboard}
+            onQuit={quitApp}
+            updateStatus={updateStatus}
+            onCheckUpdates={() => checkForUpdates(false)}
+            onInstallUpdate={installUpdate}
+          />
+        ) : null}
       </section>
 
       {imageMenuPresence.mounted && shownImageMenu ? <ImageImportMenu x={shownImageMenu.x} y={shownImageMenu.y} presenceState={imageMenuPresence.state} onClose={() => setContextMenu(null)} onChoose={() => { setContextMenu(null); void imageImport.chooseImages(); }} onPaste={() => { setContextMenu(null); void imageImport.pasteImage(); }} /> : null}
@@ -611,28 +633,6 @@ export default function App() {
           }
           onCancel={() => setContextMenu(null)}
           onDelete={() => void handleDeleteSection(sectionMenu.id)}
-        />
-      ) : null}
-
-      {settingsPresence.mounted ? (
-        <SettingsSheet
-          permissions={permissions}
-          settings={appSettings}
-          trashCount={counts.trash}
-          presenceState={settingsPresence.state}
-          onClose={() => setSettingsOpen(false)}
-          onRequestAccessibility={requestAccessibilityAndRefresh}
-          onShortcutChange={changeShortcut}
-          onResetShortcuts={resetAllShortcuts}
-          onKeepOpenChange={changeKeepOpen}
-          onTrashRetentionChange={changeTrashRetention}
-          onDefaultCaptureViewChange={changeDefaultCaptureView}
-          onEmptyTrash={emptyAllTrash}
-          onCaptureClipboard={captureClipboard}
-          onQuit={quitApp}
-          updateStatus={updateStatus}
-          onCheckUpdates={() => checkForUpdates(false)}
-          onInstallUpdate={installUpdate}
         />
       ) : null}
 

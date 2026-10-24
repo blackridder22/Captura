@@ -179,14 +179,14 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
   const status = saveStatus(detail);
 
   return (
-    <div className="sheet-backdrop capture-backdrop" data-state={presenceState} onMouseDown={(event) => { if (event.target === event.currentTarget && !detail.pending) detail.close(); }} onKeyDown={onKeyDown}>
-      <section ref={sheetRef} className="capture-sheet capture-page" role="dialog" aria-modal="true" aria-labelledby="capture-sheet-title" data-view={showSource ? "source" : "page"} data-readonly={readOnly} inert={Boolean(detail.pending)}>
+    <div className="panel-page capture-page-host" data-state={presenceState} onKeyDown={onKeyDown}>
+      <section ref={sheetRef} className="capture-page" role="dialog" aria-modal="true" aria-labelledby="capture-sheet-title" data-view={showSource ? "source" : "page"} data-readonly={readOnly} inert={Boolean(detail.pending)}>
         <header>
           <div>
             <span>{kindLabel}</span>
             <strong id="capture-sheet-title">{title}</strong>
           </div>
-          <Button variant="ghost" size="icon" aria-label="Close capture" onClick={detail.close}><X size={16} /></Button>
+          <Button variant="ghost" size="icon" aria-label="Close capture" title="Close (Esc)" onClick={detail.close}><X size={16} /></Button>
         </header>
 
         {detail.ids.length > 1 ? <nav className="capture-navigation" aria-label="Selected captures">

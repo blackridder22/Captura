@@ -18,7 +18,9 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
   chips with live counts; two-line rows whose meta line starts with the mono
   time; keyboard footer.
 - Capture page: one Notion-style page per capture with a Page | Source toggle.
-- Settings: General · Shortcuts · Editor · Trash · About.
+- Settings: General · Shortcuts · Editor · Trash · About. Settings and the
+  capture page are full pages inside the panel (no modal cards, no dimmed
+  backdrop); they push in from the right while the queue slides back.
 - Separate 360 × 92 px confirmation HUD (non-focusable).
 
 ## Brand tokens
@@ -48,7 +50,7 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 
 ## Shape and controls
 
-- Radii: 6 / 9 / 12 px for controls, 16 px sheets, 20 px panel.
+- Radii: 6 / 9 / 12 px for controls, 20 px panel. Pages inherit the panel's clip.
 - Control heights: 28 / 32 / 34 px.
 - 1 px translucent borders with a soft top inset highlight.
 - Selected rows use a copper left rail and a subtle surface lift.
@@ -56,8 +58,15 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 
 ## Motion
 
-- Durations: 120 ms (fast, hover/press/selection), 180 ms (base), 240 ms (slow,
-  sheets). Never above 300 ms in the UI.
+- Durations: 120 ms (fast, press/selection), 180 ms (base), 240 ms (slow,
+  pages). Never above 300 ms in the UI.
+- Buttons have no hover effects and never move: no lift, scale or bounce.
+  Hover highlight is kept only on menu items and queue rows. Tab rows
+  (filters, composer kind, Settings sections, segmented controls) use one
+  sliding indicator element rather than per-tab state changes.
+- Never place a `backdrop-filter` element where it can overlap the window's
+  transparent rounded corners: WebKit paints the blurred under-page colour
+  there as a square (light grey in light mode).
 - Curves: `--ease-out: cubic-bezier(0.23, 1, 0.32, 1)` for anything entering or
   leaving; `--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1)` for movement on
   screen (the filter underline).
