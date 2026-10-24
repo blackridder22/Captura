@@ -64,8 +64,11 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
   pages). Never above 300 ms in the UI.
 - Buttons have no hover effects and never move: no lift, scale or bounce.
   Hover highlight is kept only on menu items and queue rows. Tab rows
-  (filters, composer kind, Settings sections, segmented controls) use one
-  sliding indicator element rather than per-tab state changes.
+  (filters, composer kind, Settings sections, segmented controls, the capture
+  page's view and kind switchers) use one sliding indicator element rather
+  than per-tab state changes.
+- No rubber band: `overscroll-behavior: none` on the root and on every scroll
+  container. The panel is a fixed surface and must not bounce past its edge.
 - Never place a `backdrop-filter` element where it can overlap the window's
   transparent rounded corners: WebKit paints the blurred under-page colour
   there as a square (light grey in light mode).

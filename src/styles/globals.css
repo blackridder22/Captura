@@ -2428,3 +2428,15 @@ kbd {
 .composer-tabs button[role="tab"], .composer-tabs button[role="tab"][data-active="true"] { box-shadow: none; }
 .composer-indicator { position: absolute; bottom: -1px; left: 0; width: 0; height: 2px; border-radius: 999px 999px 0 0; background: var(--accent); pointer-events: none; }
 .quick-capture textarea { height: 40px; max-height: 100px; overflow-y: auto; scrollbar-width: thin; }
+
+/* Capture page footer switchers share the sliding highlight. */
+.view-switcher, .capture-page .sheet-kind-switcher { position: relative; }
+.view-switcher button, .capture-page .sheet-kind-switcher button { position: relative; z-index: 1; }
+.view-switcher button[data-active="true"], .capture-page .sheet-kind-switcher button[data-active="true"] { background: transparent; box-shadow: none; }
+.view-switcher .nav-indicator { top: 2px; bottom: 2px; border-radius: 6px; background: rgba(240, 139, 100, 0.11); }
+.capture-page .sheet-kind-switcher .nav-indicator { top: 2px; bottom: 2px; border-radius: 7px; background: rgba(255, 255, 255, 0.055); box-shadow: inset 0 0 0 1px rgba(240, 139, 100, 0.13); }
+
+/* No rubber band anywhere. The panel is a fixed surface: neither the root nor
+   any scroller bounces past its edge, in either axis. */
+html, body, #root, .app-frame, .captura-panel, .queue-view { overscroll-behavior: none; }
+.queue-list, .page-body, .settings-scroll, .capture-scroll, .source-editor .cm-scroller, .section-scroll, .slash-menu, .context-submenu > div, .image-import-feedback ul, .shortcut-settings, .quick-capture textarea, .caption-field { overscroll-behavior: none; }

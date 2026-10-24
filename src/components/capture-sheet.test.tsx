@@ -65,9 +65,13 @@ describe("capture page: one Notion-like page with autosave and a Source view", (
     expect(container.querySelector(".ProseMirror")?.getAttribute("contenteditable")).toBe("true");
     expect(document.activeElement).toBe(container.querySelector(".ProseMirror"));
     expect(sourceField(container)).toBeNull();
+    expect(container.querySelector(".view-switcher .nav-indicator")).not.toBeNull();
+    expect(container.querySelector<HTMLElement>('.view-switcher button[data-active="true"]')?.dataset.indicatorKey).toBe("page");
+    expect(container.querySelector<HTMLElement>('.sheet-kind-switcher button[data-active="true"]')?.dataset.indicatorKey).toBe("note");
     act(() => click(container, "Source"));
     expect(sourceField(container)?.value).toBe(first.content);
     expect(api.updateItem).not.toHaveBeenCalled();
+    expect(container.querySelector<HTMLElement>('.view-switcher button[data-active="true"]')?.dataset.indicatorKey).toBe("source");
     act(() => click(container, "Page"));
     expect(container.querySelector(".ProseMirror h1")?.textContent).toBe("First");
   });

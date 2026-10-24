@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Code2, Copy, FileText, Link2, PanelTop, Rota
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useCaptureDetail } from "../../hooks/use-capture-detail";
 import type { PresenceState } from "../../hooks/use-presence";
+import { indicatorStyle, useSlidingIndicator } from "../../hooks/use-sliding-indicator";
 import { attachmentUrl, copyItems } from "../../lib/api";
 import { captureTitle } from "../../lib/items";
 import { matchesShortcut } from "../../lib/shortcuts";
@@ -56,6 +57,12 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
   const lossyCheckedFor = useRef<string | null>(null);
   const detailRef = useRef(detail);
   detailRef.current = detail;
+  // Footer switchers: one highlight slides between Page | Source and between
+  // the kinds, like the queue's tab rows. Re-measured when a capture loads.
+  const viewTabs = useRef<HTMLDivElement>(null);
+  const viewIndicator = useSlidingIndicator(viewTabs, showSource ? "source" : "page", [activeId, isImage, detail.loading]);
+  const kindTabs = useRef<HTMLDivElement>(null);
+  const kindIndicator = useSlidingIndicator(kindTabs, String(detail.kind), [activeId, isImage, detail.loading]);
 
   // The editor is shared across opens (see page-editor-instance); this page
   // only attaches handlers, loads the capture, and gives it back on close.
@@ -227,15 +234,17 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
 
         <footer>
           <div className="capture-footer-row">
-            {!isImage ? <div className="view-switcher" role="tablist" aria-label="Capture view">
-              <button type="button" role="tab" aria-selected={!showSource} data-active={!showSource} onClick={() => switchView("page")}><PanelTop size={12} />Page</button>
-              <button type="button" role="tab" aria-selected={showSource} data-active={showSource} onClick={() => switchView("source")}><Code2 size={12} />Source</button>
+            {!isImage ? <div ref={viewTabs} className="view-switcher" role="tablist" aria-label="Capture view">
+              <span className="nav-indicator" aria-hidden="true" data-ready={viewIndicator.ready} style={indicatorStyle(viewIndicator)} />
+              <button type="button" role="tab" aria-selected={!showSource} data-active={!showSource} data-indicator-key="page" onClick={() => switchView("page")}><PanelTop size={12} />Page</button>
+              <button type="button" role="tab" aria-selected={showSource} data-active={showSource} data-indicator-key="source" onClick={() => switchView("source")}><Code2 size={12} />Source</button>
             </div> : <span className="capture-status">Image caption</span>}
             <span className="capture-status capture-save-status" role="status" data-state={detail.saveState} aria-live="polite">{copyMessage || status}</span>
           </div>
           <div className="capture-footer-row">
-            {!isImage ? <div className="sheet-kind-switcher" aria-label="Capture kind">
-              {kinds.map(({ value, label, icon: Icon }) => <button type="button" key={value} disabled={readOnly || detail.loading} data-active={detail.kind === value} aria-pressed={detail.kind === value} onClick={() => detail.setKind(value)}><Icon size={13} />{label}</button>)}
+            {!isImage ? <div ref={kindTabs} className="sheet-kind-switcher" aria-label="Capture kind">
+              <span className="nav-indicator" aria-hidden="true" data-ready={kindIndicator.ready} style={indicatorStyle(kindIndicator)} />
+              {kinds.map(({ value, label, icon: Icon }) => <button type="button" key={value} disabled={readOnly || detail.loading} data-active={detail.kind === value} aria-pressed={detail.kind === value} data-indicator-key={value} onClick={() => detail.setKind(value)}><Icon size={13} />{label}</button>)}
             </div> : <span />}
             <div className="capture-save-row">
               <Button variant="ghost" size="sm" disabled={!detail.base || detail.unavailable} onClick={() => void copy()}><Copy size={13} />Copy</Button>
