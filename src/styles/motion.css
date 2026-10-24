@@ -3,18 +3,22 @@
    Buttons have no hover motion: nothing lifts, scales or bounces. */
 
 /* Pages (Settings, the capture page) push in from the right over the queue;
-   the queue slides back a little and dims while it is covered. */
+   the queue slides back a little and dims while it is covered. Closing runs
+   the same slide backwards: same distance, same curve, same duration, for
+   the page and the queue alike. usePresence keeps the page mounted for the
+   full --dur-slow (PAGE_TRANSITION_MS in App.tsx) so the exit is not cut off. */
 .panel-page[data-state] {
   transition:
     transform var(--dur-slow) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
+    opacity var(--dur-slow) var(--ease-out);
 }
-.panel-page[data-state="enter"] { opacity: 0; transform: translateX(28px); }
-.panel-page[data-state="exit"] { opacity: 0; transform: translateX(22px); transition-duration: 160ms; pointer-events: none; }
+.panel-page[data-state="enter"],
+.panel-page[data-state="exit"] { opacity: 0; transform: translateX(28px); }
+.panel-page[data-state="exit"] { pointer-events: none; }
 .queue-view {
   transition:
     transform var(--dur-slow) var(--ease-out),
-    opacity var(--dur-base) var(--ease-out);
+    opacity var(--dur-slow) var(--ease-out);
 }
 .queue-view[data-covered="true"] { transform: translateX(-18px); opacity: 0.55; }
 

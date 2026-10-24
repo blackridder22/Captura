@@ -39,6 +39,9 @@ import { ImageImportFeedback } from "./components/image-import-feedback";
 
 const CaptureSheet = lazy(() => import("./components/capture-sheet"));
 
+/// Matches --dur-slow in tokens.css: the page push/pop transition length.
+const PAGE_TRANSITION_MS = 240;
+
 export default function App() {
   const {
     items,
@@ -309,9 +312,10 @@ export default function App() {
   const onRowPurge = useStableCallback((id: string) => void handlePurge(id));
 
   // Exit transitions: each overlay stays mounted for its exit, rendering the
-  // last content it had.
-  const settingsPresence = usePresence(settingsOpen, 170);
-  const capturePresence = usePresence(captureRequest !== null, 170);
+  // last content it had. Pages slide out along the path they slid in on, so
+  // they stay mounted for the whole --dur-slow run.
+  const settingsPresence = usePresence(settingsOpen, PAGE_TRANSITION_MS);
+  const capturePresence = usePresence(captureRequest !== null, PAGE_TRANSITION_MS);
   const shownCaptureRequest = useLastValue(captureRequest);
   const toastPresence = usePresence(toast !== null, 160);
   const shownToast = useLastValue(toast);

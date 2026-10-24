@@ -20,7 +20,9 @@ bundled fonts in `src/styles/fonts.css` and `public/fonts/`.
 - Capture page: one Notion-style page per capture with a Page | Source toggle.
 - Settings: General · Shortcuts · Editor · Trash · About. Settings and the
   capture page are full pages inside the panel (no modal cards, no dimmed
-  backdrop); they push in from the right while the queue slides back.
+  backdrop); they push in from the right while the queue slides back, and
+  closing runs the same slide backwards (same distance, curve and duration;
+  the page stays mounted for the whole run).
 - Separate 360 × 92 px confirmation HUD (non-focusable).
 
 ## Brand tokens
