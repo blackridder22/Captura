@@ -67,13 +67,19 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               place(props);
             },
             onKeyDown: (props) => {
+              let consumed: boolean;
               if (props.event.key === "Escape") {
-                // Close the palette only; the page's Escape handler sees
-                // defaultPrevented and leaves the sheet open.
+                // Close the palette only, never the page.
                 exitSuggestion(props.view, slashPluginKey);
-                return true;
+                consumed = true;
+              } else {
+                consumed = renderer?.ref?.onKeyDown(props) ?? false;
               }
-              return renderer?.ref?.onKeyDown(props) ?? false;
+              // The page's key handler cannot rely on defaultPrevented
+              // (ProseMirror prevents Escape and Enter itself), so keys the
+              // palette used are marked on the event.
+              if (consumed) (props.event as KeyboardEvent & { capturaConsumed?: boolean }).capturaConsumed = true;
+              return consumed;
             },
             onExit: () => {
               renderer?.element.remove();

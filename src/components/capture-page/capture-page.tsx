@@ -152,14 +152,19 @@ export default function CapturePage({ request, shortcuts, defaultView = "page", 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     // The page owns these keys; queue actions must not run behind the overlay.
     event.stopPropagation();
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
-    if (matchesShortcut(event.nativeEvent, shortcuts.dismiss) || matchesShortcut(event.nativeEvent, shortcuts.close)) {
+    const native = event.nativeEvent as typeof event.nativeEvent & { capturaConsumed?: boolean };
+    // ProseMirror calls preventDefault on Escape and Enter for its own reasons
+    // (prosemirror-view's captureKeyDown, keyed on keyCode), so defaultPrevented
+    // cannot mean "another layer owns this key". Layers that do, such as the
+    // slash palette, mark the event as consumed instead.
+    if (native.isComposing || native.capturaConsumed) return;
+    if (matchesShortcut(native, shortcuts.dismiss) || matchesShortcut(native, shortcuts.close)) {
       event.preventDefault();
       if (detail.pending) detail.cancelPending();
       else detail.close();
       return;
     }
-    if (event.key === "Tab" && !(event.target as Element).closest(".ProseMirror, .cm-editor")) {
+    if (event.key === "Tab" && !event.defaultPrevented && !(event.target as Element).closest(".ProseMirror, .cm-editor")) {
       const scope = detail.pending ? confirmationRef.current : sheetRef.current;
       const controls = [...(scope?.querySelectorAll<HTMLElement>("button:not(:disabled), textarea:not(:disabled), a[href], [tabindex='0'], .ProseMirror, .cm-content") ?? [])];
       const index = controls.indexOf(document.activeElement as HTMLElement);

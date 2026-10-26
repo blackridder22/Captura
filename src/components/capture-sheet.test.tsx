@@ -140,11 +140,26 @@ describe("capture page: one Notion-like page with autosave and a Source view", (
     window.addEventListener("keydown", queueKey);
     const editor = container.querySelector<HTMLElement>(".ProseMirror")!;
     act(() => { pageEditor(container)!.chain().focus("end").insertContent(" typed").run(); });
-    await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", metaKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
+    // keyCode 13: ProseMirror prevents Enter itself, as a real keyboard event shows.
+    await act(async () => { editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, metaKey: true, bubbles: true, cancelable: true })); await Promise.resolve(); });
     expect(api.updateItem).toHaveBeenCalledWith(expect.objectContaining({ content: "# First\n\nText typed" }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(queueKey).not.toHaveBeenCalled();
     window.removeEventListener("keydown", queueKey);
+  });
+
+  it("closes on Escape as a real keyboard sends it, but only closes the slash palette while it is open", async () => {
+    await mount();
+    const editor = container.querySelector<HTMLElement>(".ProseMirror")!;
+    const escape = () => new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, bubbles: true, cancelable: true });
+    act(() => { pageEditor(container)!.chain().focus("end").insertContent({ type: "paragraph" }).insertContent("/").run(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5); });
+    expect(container.querySelector(".slash-menu")).not.toBeNull();
+    await act(async () => { editor.dispatchEvent(escape()); await Promise.resolve(); });
+    expect(container.querySelector(".slash-menu")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => { editor.dispatchEvent(escape()); await Promise.resolve(); });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("opens Markdown the page cannot keep in Source, with a way back", async () => {
